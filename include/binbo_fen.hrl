@@ -14,6 +14,8 @@
 
 -record(parsed_fen, {
     position = [] :: binbo_fen:position(),
+    white_reserve = #{} :: binbo_position:reserves(),
+    black_reserve = #{} :: binbo_position:reserves(),
     sidetomove = undefined :: undefined | $w | $b,
     castling = 0 :: binbo_position:castling(),
     enpassant = none :: none | binbo_board:square_index(),

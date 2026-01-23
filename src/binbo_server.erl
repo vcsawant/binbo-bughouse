@@ -18,7 +18,7 @@
 -export([start_link/1]).
 -export([get_server_options/1, set_server_options/2]).
 -export([stop/1]).
--export([new_game/2, game_move/2, game_san_move/2, game_index_move/4, get_fen/1]).
+-export([new_game/2, new_game/3, game_move/2, game_san_move/2, game_index_move/4, get_fen/1]).
 -export([load_pgn/2, load_pgn_file/2]).
 -export([game_state/1, set_game_state/2, game_status/1, game_draw/2, set_game_winner/3]).
 -export([all_legal_moves/2, side_to_move/1]).
@@ -29,6 +29,10 @@
 -export([uci_set_position/2, uci_sync_position/1]).
 -export([set_uci_handler/2]).
 -export([get_pieces_list/2]).
+%% Bughouse-specific exports
+-export([get_reserves/1, add_to_reserve/3]).
+-export([drop_move/3, drop_move_uci/2]).
+-export([all_legal_drops/1, can_drop/3]).
 
 %%% gen_server export.
 -export([init/1]).
@@ -199,7 +203,9 @@ code_change(_OldVsn, State, _Extra) ->
 %% do_handle_call/3
 -spec do_handle_call(term(), from(), state()) -> {reply, term(), state()} | {noreply, state()}.
 do_handle_call({new_game, Fen}, _From, State) ->
-    {Reply, NewState} = case binbo_game:new(Fen) of
+    do_handle_call({new_game, Fen, #{}}, _From, State);
+do_handle_call({new_game, Fen, Opts}, _From, State) ->
+    {Reply, NewState} = case binbo_game:new(Fen, Opts) of
         {ok, {Game, GameStatus}} ->
             {{ok, GameStatus}, State#state{game = Game}};
         {error, _} = Error ->
@@ -242,6 +248,31 @@ do_handle_call({all_legal_moves, MoveType}, _From, #state{game = Game} = State) 
     {reply, Reply, State};
 do_handle_call(side_to_move, _From, #state{game = Game} = State) ->
     Reply = binbo_game:side_to_move(Game),
+    {reply, Reply, State};
+do_handle_call(get_reserves, _From, #state{game = Game} = State) ->
+    Reply = binbo_game:get_reserves(Game),
+    {reply, Reply, State};
+do_handle_call({add_to_reserve, Color, PieceType}, _From, #state{game = Game0} = State0) ->
+    {Reply, NewState} = case binbo_game:add_to_reserve(Color, PieceType, Game0) of
+        {ok, Game} ->
+            {ok, State0#state{game = Game}};
+        {error, _} = Error ->
+            {Error, State0}
+    end,
+    {reply, Reply, NewState};
+do_handle_call({drop_move, DropMove}, _From, #state{game = Game0} = State0) ->
+    {Reply, NewState} = case binbo_game:drop_move(DropMove, Game0) of
+        {ok, {Game, GameStatus}} ->
+            {{ok, GameStatus}, State0#state{game = Game}};
+        {error, _} = Error ->
+            {Error, State0}
+    end,
+    {reply, Reply, NewState};
+do_handle_call(all_legal_drops, _From, #state{game = Game} = State) ->
+    Reply = binbo_game:all_legal_drops(Game),
+    {reply, Reply, State};
+do_handle_call({can_drop, PieceType, Square}, _From, #state{game = Game} = State) ->
+    Reply = binbo_game:can_drop(PieceType, Square, Game),
     {reply, Reply, State};
 do_handle_call({game_draw, Reason}, _From, #state{game = Game0} = State0) ->
     {Reply, NewState} = case binbo_game:draw(Reason, Game0) of
@@ -409,7 +440,12 @@ set_server_options(Pid, Opts) ->
 %% new_game/2
 -spec new_game(pid(), fen()) -> new_game_ret().
 new_game(Pid, Fen) ->
-    call(Pid, {new_game, Fen}).
+    new_game(Pid, Fen, #{}).
+
+%% new_game/3
+-spec new_game(pid(), fen(), #{mode => standard | bughouse}) -> new_game_ret().
+new_game(Pid, Fen, Opts) ->
+    call(Pid, {new_game, Fen, Opts}).
 
 %% game_move/2
 -spec game_move(pid(), sq_move()) -> game_move_ret().
@@ -475,6 +511,40 @@ all_legal_moves(Pid, MoveType) ->
 -spec side_to_move(pid()) -> binbo_game:side_to_move_ret().
 side_to_move(Pid) ->
     call(Pid, side_to_move).
+
+%% get_reserves/1
+-spec get_reserves(pid()) -> {ok, #{white => binbo_position:reserves(), black => binbo_position:reserves()}} | {error, term()}.
+get_reserves(Pid) ->
+    call(Pid, get_reserves).
+
+%% add_to_reserve/3
+-spec add_to_reserve(pid(), white | black, p | n | b | r | q) -> ok | {error, term()}.
+add_to_reserve(Pid, Color, PieceType) ->
+    call(Pid, {add_to_reserve, Color, PieceType}).
+
+%% drop_move/3
+-spec drop_move(pid(), p | n | b | r | q, binary()) -> game_move_ret().
+drop_move(Pid, PieceType, Square) ->
+    PieceChar = case PieceType of
+        p -> $P; n -> $N; b -> $B; r -> $R; q -> $Q
+    end,
+    DropMove = <<PieceChar, $@, Square/binary>>,
+    call(Pid, {drop_move, DropMove}).
+
+%% drop_move_uci/2
+-spec drop_move_uci(pid(), binary()) -> game_move_ret().
+drop_move_uci(Pid, DropMove) ->
+    call(Pid, {drop_move, DropMove}).
+
+%% all_legal_drops/1
+-spec all_legal_drops(pid()) -> {ok, [binary()]} | {error, term()}.
+all_legal_drops(Pid) ->
+    call(Pid, all_legal_drops).
+
+%% can_drop/3
+-spec can_drop(pid(), p | n | b | r | q, binary()) -> boolean().
+can_drop(Pid, PieceType, Square) ->
+    call(Pid, {can_drop, PieceType, Square}).
 
 %% new_uci_game/2
 -spec new_uci_game(pid(), uci_game_opts()) -> new_uci_game_ret().

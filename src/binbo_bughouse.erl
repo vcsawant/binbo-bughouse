@@ -12,12 +12,12 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 
--module(binbo).
+-module(binbo_bughouse).
 
 -export([start/0, stop/0]).
 -export([new_server/0, new_server/1]).
 -export([get_server_options/1, set_server_options/2]).
--export([new_game/1, new_game/2]).
+-export([new_game/1, new_game/2, new_game/3]).
 -export([game_state/1, set_game_state/2, game_status/1, side_to_move/1]).
 -export([move/2, san_move/2, index_move/3, index_move/4, get_fen/1]).
 -export([load_pgn/2, load_pgn_file/2]).
@@ -32,14 +32,19 @@
 -export([uci_set_position/2, uci_sync_position/1]).
 -export([set_uci_handler/2]).
 -export([get_pieces_list/2]).
+%% Bughouse-specific exports
+-export([get_reserves/1, add_to_reserve/3]).
+-export([drop_move/3, drop_move_uci/2]).
+-export([all_legal_drops/1]).
+-export([can_drop/3]).
 
 -define(APPLICATION, ?MODULE).
 
 %% Test:
-%% {ok, Pid} = binbo:new_server(), binbo:new_game(Pid).
-%% binbo:print_board(Pid, [unicode]).
-%% binbo:game_state(Pid).
-%% binbo:move(Pid, "e2e4").
+%% {ok, Pid} = binbo_bughouse:new_server(), binbo_bughouse:new_game(Pid).
+%% binbo_bughouse:print_board(Pid, [unicode]).
+%% binbo_bughouse:game_state(Pid).
+%% binbo_bughouse:move(Pid, "e2e4").
 
 %%%------------------------------------------------------------------------------
 %%%   API (application)
@@ -105,14 +110,24 @@ set_server_options(Pid, Opts) ->
 
 %% new_game/1
 -spec new_game(pid()) -> binbo_server:new_game_ret().
-%% @equiv new_game(Pid, initial)
+%% @equiv new_game(Pid, initial, #{})
 new_game(Pid) ->
-    new_game(Pid, initial).
+    new_game(Pid, initial, #{}).
 
 %% new_game/2
 -spec new_game(pid(), initial | binbo_fen:fen()) -> binbo_server:new_game_ret().
+%% @equiv new_game(Pid, Fen, #{})
 new_game(Pid, Fen) ->
-    binbo_server:new_game(Pid, Fen).
+    new_game(Pid, Fen, #{}).
+
+%% new_game/3
+-spec new_game(pid(), initial | binbo_fen:fen(), #{mode => standard | bughouse}) -> binbo_server:new_game_ret().
+%% @doc
+%% Start a new game with the given FEN and options.
+%% Use #{mode => bughouse} for Bughouse mode, or #{mode => standard} for standard chess.
+%% @end
+new_game(Pid, Fen, Opts) ->
+    binbo_server:new_game(Pid, Fen, Opts).
 
 %% move/2
 -spec move(pid(), binbo_move:sq_move()) -> binbo_server:game_move_ret().
@@ -216,6 +231,64 @@ all_legal_moves(Pid, MoveType) ->
 -spec side_to_move(pid()) -> binbo_game:side_to_move_ret().
 side_to_move(Pid) ->
     binbo_server:side_to_move(Pid).
+
+
+%%%------------------------------------------------------------------------------
+%%%   API (Bughouse-specific)
+%%%------------------------------------------------------------------------------
+
+%% get_reserves/1
+-spec get_reserves(pid()) -> {ok, #{white => binbo_position:reserves(), black => binbo_position:reserves()}} | {error, term()}.
+%% @doc
+%% Returns the current piece reserves for both sides.
+%% @end
+get_reserves(Pid) ->
+    binbo_server:get_reserves(Pid).
+
+%% add_to_reserve/3
+-spec add_to_reserve(pid(), white | black, p | n | b | r | q) -> ok | {error, term()}.
+%% @doc
+%% Adds a piece to a player's reserve (called by Elixir when partner captures a piece).
+%% @end
+add_to_reserve(Pid, Color, PieceType) ->
+    binbo_server:add_to_reserve(Pid, Color, PieceType).
+
+%% drop_move/3
+-spec drop_move(pid(), p | n | b | r | q, binary()) -> binbo_server:game_move_ret().
+%% @doc
+%% Performs a piece drop from reserve.
+%% Example: drop_move(Pid, p, <<"e4">>)
+%% @end
+drop_move(Pid, PieceType, Square) ->
+    binbo_server:drop_move(Pid, PieceType, Square).
+
+%% drop_move_uci/2
+-spec drop_move_uci(pid(), binary()) -> binbo_server:game_move_ret().
+%% @doc
+%% Performs a piece drop using UCI @ notation.
+%% Example: drop_move_uci(Pid, <<"P@e4">>)
+%% @end
+drop_move_uci(Pid, DropMove) ->
+    binbo_server:drop_move_uci(Pid, DropMove).
+
+%% all_legal_drops/1
+-spec all_legal_drops(pid()) -> {ok, [binary()]} | {error, term()}.
+%% @doc
+%% Returns all legal drop moves for the current side.
+%% Example: {ok, [<<"P@e4">>, <<"N@f3">>, <<"B@c4">>]}
+%% @end
+all_legal_drops(Pid) ->
+    binbo_server:all_legal_drops(Pid).
+
+%% can_drop/3
+-spec can_drop(pid(), p | n | b | r | q, binary()) -> boolean().
+%% @doc
+%% Checks if a specific drop is legal.
+%% Example: can_drop(Pid, p, <<"e4">>)
+%% @end
+can_drop(Pid, PieceType, Square) ->
+    binbo_server:can_drop(Pid, PieceType, Square).
+
 
 %% new_uci_game/2
 -spec new_uci_game(pid(), binbo_server:uci_game_opts()) -> binbo_server:new_uci_game_ret().

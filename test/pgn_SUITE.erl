@@ -59,7 +59,7 @@ groups() ->
 %% init_per_suite/1
 init_per_suite(Config) ->
     ok = binbo_test_lib:all_group_testcases_exported(?MODULE),
-    {ok, _} = binbo:start(),
+    {ok, _} = binbo_bughouse:start(),
     Config.
 
 %% end_per_suite/1
@@ -68,13 +68,13 @@ end_per_suite(_Config) ->
 
 %% init_per_testcase/2
 init_per_testcase(_TestCase, Config) ->
-    {ok, Pid} = binbo:new_server(),
+    {ok, Pid} = binbo_bughouse:new_server(),
     [{pid, Pid} | Config].
 
 %% end_per_testcase/2
 end_per_testcase(_TestCase, Config) ->
     Pid = get_pid(Config),
-    ok = binbo:stop_server(Pid),
+    ok = binbo_bughouse:stop_server(Pid),
     ok.
 
 %% get_pid/1
@@ -85,14 +85,14 @@ get_pid(Config) ->
 load_pgn_empty(Config) ->
     Pid = get_pid(Config),
     Pgn = <<>>,
-    {error,empty_pgn} = binbo:load_pgn(Pid, Pgn),
+    {error,empty_pgn} = binbo_bughouse:load_pgn(Pid, Pgn),
     ok.
 
 %% load_pgn_not_binary/1
 load_pgn_not_binary(Config) ->
     Pid = get_pid(Config),
     Pgn = " not binary PGN ",
-    {error,invalid_pgn_datatype} = binbo:load_pgn(Pid, Pgn),
+    {error,invalid_pgn_datatype} = binbo_bughouse:load_pgn(Pid, Pgn),
     ok.
 
 %% load_pgn_no_moves/1
@@ -107,23 +107,23 @@ load_pgn_no_moves(Config) ->
     "[White \"Rated game\"]\n"
     >>,
     Pgn3 = <<"*">>,
-    {ok, continue} = binbo:load_pgn(Pid, Pgn1),
-    {ok, continue} = binbo:load_pgn(Pid, Pgn2),
-    {ok, continue} = binbo:load_pgn(Pid, Pgn3),
+    {ok, continue} = binbo_bughouse:load_pgn(Pid, Pgn1),
+    {ok, continue} = binbo_bughouse:load_pgn(Pid, Pgn2),
+    {ok, continue} = binbo_bughouse:load_pgn(Pid, Pgn3),
     ok.
 
 %% load_pgn_no_result/1
 load_pgn_no_result(Config) ->
     Pid = get_pid(Config),
     Pgn = pgn_no_result(),
-    {ok,continue} = binbo:load_pgn(Pid, Pgn),
+    {ok,continue} = binbo_bughouse:load_pgn(Pid, Pgn),
     ok.
 
 %% load_pgn_nightmare/1
 load_pgn_nightmare(Config) ->
     Pid = get_pid(Config),
     Pgn = pgn_nightmare(),
-    {ok, {checkmate, black_wins}} = binbo:load_pgn(Pid, Pgn),
+    {ok, {checkmate, black_wins}} = binbo_bughouse:load_pgn(Pid, Pgn),
     ok.
 
 %% load_pgn_from_file/1
@@ -131,14 +131,14 @@ load_pgn_from_file(Config) ->
     Pid = get_pid(Config),
     DataDir = ?value(data_dir, Config), % ./pgn_SUITE_data/
     Filename = filename:join(DataDir, "simple.pgn"),
-    {ok, continue} = binbo:load_pgn_file(Pid, Filename),
+    {ok, continue} = binbo_bughouse:load_pgn_file(Pid, Filename),
     ok.
 
 %% load_pgn_with_queen_castling/1
 load_pgn_with_queen_castling(Config) ->
     Pid = get_pid(Config),
     Pgn = pgn_with_queen_castling(),
-    {ok, continue} = binbo:load_pgn(Pid, Pgn),
+    {ok, continue} = binbo_bughouse:load_pgn(Pid, Pgn),
     ok.
 
 %% load_pgn_from_file_fifty_move_rule_timman_lutz/1
@@ -146,12 +146,12 @@ load_pgn_from_file_fifty_move_rule_timman_lutz(Config) ->
     Pid = get_pid(Config),
     DataDir = ?value(data_dir, Config), % ./pgn_SUITE_data/
     Filename = filename:join(DataDir, "fifty-move-rule-Timman-Lutz.pgn"),
-    {ok, continue} = binbo:load_pgn_file(Pid, Filename),
-    {ok, <<"6R1/7k/8/8/1r3B2/5K2/8/8 w - - 99 119">>} = binbo:get_fen(Pid),
-    {ok,{draw,rule50}} = binbo:san_move(Pid, <<"Rg5">>),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
-    {error,{{game_over,{draw,rule50}},<<"Ra4">>}} = binbo:san_move(Pid, <<"Ra4">>),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
+    {ok, continue} = binbo_bughouse:load_pgn_file(Pid, Filename),
+    {ok, <<"6R1/7k/8/8/1r3B2/5K2/8/8 w - - 99 119">>} = binbo_bughouse:get_fen(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:san_move(Pid, <<"Rg5">>),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
+    {error,{{game_over,{draw,rule50}},<<"Ra4">>}} = binbo_bughouse:san_move(Pid, <<"Ra4">>),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
     ok.
 
 %% load_pgn_from_file_fifty_move_rule_karpov_kasparov/1
@@ -159,11 +159,11 @@ load_pgn_from_file_fifty_move_rule_karpov_kasparov(Config) ->
     Pid = get_pid(Config),
     DataDir = ?value(data_dir, Config), % ./pgn_SUITE_data/
     Filename = filename:join(DataDir, "fifty-move-rule-Karpov-Kasparov.pgn"),
-    {ok,{draw,rule50}} = binbo:load_pgn_file(Pid, Filename),
-    {ok, <<"7k/4N3/5K2/5BN1/8/8/8/r7 b - - 100 113">>} = binbo:get_fen(Pid),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
-    {error,{{game_over,{draw,rule50}},<<"Ra6+">>}} = binbo:san_move(Pid, <<"Ra6+">>),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:load_pgn_file(Pid, Filename),
+    {ok, <<"7k/4N3/5K2/5BN1/8/8/8/r7 b - - 100 113">>} = binbo_bughouse:get_fen(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
+    {error,{{game_over,{draw,rule50}},<<"Ra6+">>}} = binbo_bughouse:san_move(Pid, <<"Ra6+">>),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
     ok.
 
 %% load_pgn_from_file_fifty_move_rule_lputian_harutjunyan/1
@@ -171,11 +171,11 @@ load_pgn_from_file_fifty_move_rule_lputian_harutjunyan(Config) ->
     Pid = get_pid(Config),
     DataDir = ?value(data_dir, Config), % ./pgn_SUITE_data/
     Filename = filename:join(DataDir, "fifty-move-rule-Lputian-Harutjunyan.pgn"),
-    {ok,{draw,rule50}} = binbo:load_pgn_file(Pid, Filename),
-    {ok, <<"7k/1q6/7P/6P1/3Q3K/8/8/8 b - - 100 136">>} = binbo:get_fen(Pid),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
-    {error,{{game_over,{draw,rule50}},<<"Kh7">>}} = binbo:san_move(Pid, <<"Kh7">>),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:load_pgn_file(Pid, Filename),
+    {ok, <<"7k/1q6/7P/6P1/3Q3K/8/8/8 b - - 100 136">>} = binbo_bughouse:get_fen(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
+    {error,{{game_over,{draw,rule50}},<<"Kh7">>}} = binbo_bughouse:san_move(Pid, <<"Kh7">>),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
     ok.
 
 %% load_pgn_from_file_fifty_move_rule_nguyen_vachier_lagrave/1
@@ -183,11 +183,11 @@ load_pgn_from_file_fifty_move_rule_nguyen_vachier_lagrave(Config) ->
     Pid = get_pid(Config),
     DataDir = ?value(data_dir, Config), % ./pgn_SUITE_data/
     Filename = filename:join(DataDir, "fifty-move-rule-Nguyen-Vachier-Lagrave.pgn"),
-    {ok,{draw,rule50}} = binbo:load_pgn_file(Pid, Filename),
-    {ok, <<"4R3/kr6/2K5/2B5/8/8/8/8 b - - 100 121">>} = binbo:get_fen(Pid),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
-    {error,{{game_over,{draw,rule50}},<<"Ka6">>}} = binbo:san_move(Pid, <<"Ka6">>),
-    {ok,{draw,rule50}} = binbo:game_status(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:load_pgn_file(Pid, Filename),
+    {ok, <<"4R3/kr6/2K5/2B5/8/8/8/8 b - - 100 121">>} = binbo_bughouse:get_fen(Pid),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
+    {error,{{game_over,{draw,rule50}},<<"Ka6">>}} = binbo_bughouse:san_move(Pid, <<"Ka6">>),
+    {ok,{draw,rule50}} = binbo_bughouse:game_status(Pid),
     ok.
 
 %% load_pgn_from_file_threefold_repetition_spassky_fischer/1
@@ -195,10 +195,10 @@ load_pgn_from_file_threefold_repetition_spassky_fischer(Config) ->
     Pid = get_pid(Config),
     DataDir = ?value(data_dir, Config), % ./pgn_SUITE_data/
     Filename = filename:join(DataDir, "threefold-repetition-Spassky-Fischer.pgn"),
-    {ok,continue} = binbo:load_pgn_file(Pid, Filename),
-    {ok,continue} = binbo:game_status(Pid),
-    {ok,{draw,threefold_repetition}} = binbo:san_move(Pid, <<"Qh6">>),
-    {ok,{draw,threefold_repetition}} = binbo:game_status(Pid),
+    {ok,continue} = binbo_bughouse:load_pgn_file(Pid, Filename),
+    {ok,continue} = binbo_bughouse:game_status(Pid),
+    {ok,{draw,threefold_repetition}} = binbo_bughouse:san_move(Pid, <<"Qh6">>),
+    {ok,{draw,threefold_repetition}} = binbo_bughouse:game_status(Pid),
     ok.
 
 %%%------------------------------------------------------------------------------

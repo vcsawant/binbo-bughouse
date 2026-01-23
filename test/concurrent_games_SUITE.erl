@@ -26,7 +26,7 @@ all() -> [concurrent_games_test].
 
 %% init_per_suite/1
 init_per_suite(Config) ->
-    {ok, _} = binbo:start(),
+    {ok, _} = binbo_bughouse:start(),
     [{games_total, 100} | Config].
 
 %% end_per_suite/1
@@ -62,15 +62,15 @@ await_games(Pids, Ref) ->
 
 %% await_game_end/2
 await_game_end(Parent, Ref) ->
-    {ok, Pid} = binbo:new_server(),
+    {ok, Pid} = binbo_bughouse:new_server(),
     ok = play_game(Pid),
-    ok = binbo:stop_server(Pid),
+    ok = binbo_bughouse:stop_server(Pid),
     Parent ! {self(), Ref, game_end},
     ok.
 
 %% play_game/1
 play_game(Pid) ->
-    {ok, continue} = binbo:new_game(Pid),
-    {ok, continue} = binbo:move(Pid, <<"e2e4">>),
-    {ok, continue} = binbo:move(Pid, <<"e7e5">>),
+    {ok, continue} = binbo_bughouse:new_game(Pid),
+    {ok, continue} = binbo_bughouse:move(Pid, <<"e2e4">>),
+    {ok, continue} = binbo_bughouse:move(Pid, <<"e7e5">>),
     ok.

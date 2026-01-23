@@ -1,0 +1,14 @@
+{application, binbo_bughouse, [
+    {description, "Bughouse chess engine based on binbo bitboards, forked from DOBRO/binbo"},
+    {vsn, "1.0.0"},
+    {modules, []},
+    {registered, [binbo_sup]},
+    {applications, [kernel, stdlib, compiler, syntax_tools, uef]},
+    {mod, {binbo_bughouse_app, []}},
+    {env, []},
+    {licenses, ["Apache-2.0"]},
+    {links, [
+        {"GitHub", "https://github.com/vcsawant/binbo-bughouse"},
+        {"Original binbo", "https://github.com/DOBRO/binbo"}
+    ]}
+]}.

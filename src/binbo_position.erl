@@ -19,6 +19,10 @@
 -export([get_status/1, with_status/3, is_status_inprogress/1, manual_draw/2, set_manual_winner/3]).
 -export([make_move/2, finalize_move/2]).
 -export([get_fen/1, pretty_board/2, get_pieces_list/2]).
+-export([get_reserve/2, add_piece_to_reserve/3, remove_piece_from_reserve/3]).
+-export([get_mode/1]).
+-export([piece_type_to_atom/1]).
+-export([set_piece/3]).
 -export([
     pawn_moves_bb/3, pawn_moves_bb/4,
     knight_moves_bb/3,
@@ -66,6 +70,7 @@
 -type hashmap() :: #{hash() => pos_integer()}.
 -type game_status_inprogress() :: ?GAME_STATUS_INPROGRESS.
 -type game_status_checkmate() :: {?GAME_STATUS_CHECKMATE, white_wins | black_wins}.
+-type game_status_king_captured() :: {?GAME_STATUS_KING_CAPTURED, white_wins | black_wins}.
 -type game_draw_stalemate() :: ?GAME_STATUS_DRAW_STALEMATE.
 -type game_draw_rule50() :: ?GAME_STATUS_DRAW_RULE50.
 -type game_draw_material() :: ?GAME_STATUS_DRAW_MATERIAL.
@@ -78,7 +83,7 @@
 -type why_winner() :: {manual, term()}.
 -type game_status_draw() :: {draw, why_draw()}.
 -type game_status_winner() :: {winner, binbo_game:winner(), why_winner()}.
--type game_over_status() :: game_status_checkmate() | game_status_draw() | game_status_winner().
+-type game_over_status() :: game_status_checkmate() | game_status_king_captured() | game_status_draw() | game_status_winner().
 -type game_status() :: game_status_inprogress() | game_over_status().
 -type halfmove() :: binbo_fen:halfmove().
 -type fullmove() :: binbo_fen:fullmove().
@@ -87,6 +92,16 @@
     binbo_board:atom_color(),
     binbo_board:atom_piece_type()
 }.
+
+-type piece_count() :: non_neg_integer().
+-type reserves() :: #{
+    p => piece_count(),
+    n => piece_count(),
+    b => piece_count(),
+    r => piece_count(),
+    q => piece_count()
+}.
+-type game_mode() :: standard | bughouse.
 
 -type bb_game() :: #{
     ?GAME_KEY_WP := bb(), ?GAME_KEY_WN := bb(), ?GAME_KEY_WB := bb(),
@@ -105,6 +120,9 @@
     ?GAME_KEY_POS_HASH := 0 | hash(),
     ?GAME_KEY_POSITION_HASHMAP := hashmap(),
     ?GAME_KEY_STATUS := game_status(),
+    ?GAME_KEY_WHITE_RESERVE := reserves(),
+    ?GAME_KEY_BLACK_RESERVE := reserves(),
+    ?GAME_KEY_MODE := game_mode(),
     sq_idx() := piece() | ?EMPTY_SQUARE
 }.
 
@@ -125,6 +143,9 @@
     ?GAME_KEY_POS_HASH := 0,
     ?GAME_KEY_POSITION_HASHMAP := hashmap(),
     ?GAME_KEY_STATUS := game_status_inprogress(),
+    ?GAME_KEY_WHITE_RESERVE := reserves(),
+    ?GAME_KEY_BLACK_RESERVE := reserves(),
+    ?GAME_KEY_MODE := game_mode(),
     sq_idx() := ?EMPTY_SQUARE
 }.
 
@@ -143,6 +164,7 @@
 -export_type([bb_game_error/0, make_move_error/0]).
 -export_type([game_status/0, game_over_status/0]).
 -export_type([sq_piece_tuple/0]).
+-export_type([reserves/0, game_mode/0, piece_count/0]).
 
 %%%------------------------------------------------------------------------------
 %%%   API
@@ -187,6 +209,49 @@ get_status(#{?GAME_KEY_STATUS := Status}) ->
 -spec get_enpassant_bb(bb_game()) -> sq_bb() | empty_bb().
 get_enpassant_bb(#{?GAME_KEY_ENPASSANT := EnpaBB}) ->
     EnpaBB.
+
+%% get_reserve/2
+-spec get_reserve(color(), bb_game()) -> reserves().
+get_reserve(?WHITE, #{?GAME_KEY_WHITE_RESERVE := Reserve}) ->
+    Reserve;
+get_reserve(?BLACK, #{?GAME_KEY_BLACK_RESERVE := Reserve}) ->
+    Reserve.
+
+%% add_piece_to_reserve/3
+-spec add_piece_to_reserve(piece_type(), color(), bb_game()) -> bb_game().
+add_piece_to_reserve(PieceType, Color, Game) ->
+    Reserve = get_reserve(Color, Game),
+    PieceKey = piece_type_to_atom(PieceType),
+    Count = maps:get(PieceKey, Reserve, 0),
+    NewReserve = Reserve#{PieceKey => Count + 1},
+    ReserveKey = case Color of
+        ?WHITE -> ?GAME_KEY_WHITE_RESERVE;
+        ?BLACK -> ?GAME_KEY_BLACK_RESERVE
+    end,
+    Game#{ReserveKey := NewReserve}.
+
+%% remove_piece_from_reserve/3
+-spec remove_piece_from_reserve(piece_type(), color(), bb_game()) -> {ok, bb_game()} | {error, insufficient}.
+remove_piece_from_reserve(PieceType, Color, Game) ->
+    Reserve = get_reserve(Color, Game),
+    PieceKey = piece_type_to_atom(PieceType),
+    Count = maps:get(PieceKey, Reserve, 0),
+    case Count > 0 of
+        true ->
+            NewReserve = Reserve#{PieceKey => Count - 1},
+            ReserveKey = case Color of
+                ?WHITE -> ?GAME_KEY_WHITE_RESERVE;
+                ?BLACK -> ?GAME_KEY_BLACK_RESERVE
+            end,
+            {ok, Game#{ReserveKey := NewReserve}};
+        false ->
+            {error, insufficient}
+    end.
+
+%% get_mode/1
+-spec get_mode(bb_game()) -> game_mode().
+get_mode(#{?GAME_KEY_MODE := Mode}) ->
+    Mode.
 
 %% own_side_bb/2
 %% Returns bitboard of friendly pieces.
@@ -330,6 +395,19 @@ get_pieces_list(Game, SquareType) ->
 %%%   Internal functions
 %%%------------------------------------------------------------------------------
 
+%% init_empty_reserves/0
+-spec init_empty_reserves() -> reserves().
+init_empty_reserves() ->
+    #{p => 0, n => 0, b => 0, r => 0, q => 0}.
+
+%% piece_type_to_atom/1
+-spec piece_type_to_atom(piece_type()) -> p | n | b | r | q.
+piece_type_to_atom(?PAWN)   -> p;
+piece_type_to_atom(?KNIGHT) -> n;
+piece_type_to_atom(?BISHOP) -> b;
+piece_type_to_atom(?ROOK)   -> r;
+piece_type_to_atom(?QUEEN)  -> q.
+
 %% empty_bb_game/0
 -spec empty_bb_game() -> empty_bb_game().
 empty_bb_game() ->
@@ -349,7 +427,10 @@ empty_bb_game() ->
         ?GAME_KEY_LASTMOVE_PIECE => ?EMPTY_SQUARE,
         ?GAME_KEY_POS_HASH => 0,
         ?GAME_KEY_POSITION_HASHMAP => #{},
-        ?GAME_KEY_STATUS => ?GAME_STATUS_INPROGRESS
+        ?GAME_KEY_STATUS => ?GAME_STATUS_INPROGRESS,
+        ?GAME_KEY_WHITE_RESERVE => init_empty_reserves(),
+        ?GAME_KEY_BLACK_RESERVE => init_empty_reserves(),
+        ?GAME_KEY_MODE => standard
     },
     lists:foldl(fun(SqIdx, M) ->
         M#{SqIdx => ?EMPTY_SQUARE}
@@ -678,6 +759,11 @@ set_status_checkmate(Game) ->
     end,
     set_status({?GAME_STATUS_CHECKMATE, WhoWins}, Game).
 
+%% set_status_king_captured/2
+-spec set_status_king_captured(white_wins | black_wins, bb_game()) -> bb_game().
+set_status_king_captured(Winner, Game) ->
+    set_status({?GAME_STATUS_KING_CAPTURED, Winner}, Game).
+
 %% set_status_stalemate/1
 -spec set_status_stalemate(bb_game()) -> bb_game().
 set_status_stalemate(Game) ->
@@ -868,16 +954,19 @@ get_pieces_list(BB, Game, SquareType, List) ->
 %% load_parsed_fen/2
 -spec load_parsed_fen(parsed_fen(), bb_game()) -> bb_game().
 load_parsed_fen(ParsedFen, Game) ->
-    Steps = [position, sidetomove, castling, enpassant, halfmove, fullmove, hashmap],
+    Steps = [position, reserves, sidetomove, castling, enpassant, halfmove, fullmove, hashmap],
     load_parsed_fen(Steps, ParsedFen, Game).
 
 %% load_parsed_fen/3
 -spec load_parsed_fen([Step], parsed_fen(), bb_game()) -> bb_game() when
-    Step :: position | sidetomove | castling | enpassant | halfmove | fullmove | hashmap.
+    Step :: position | reserves | sidetomove | castling | enpassant | halfmove | fullmove | hashmap.
 load_parsed_fen([], _ParsedFen, Game) ->
     Game;
 load_parsed_fen([position|Tail], #parsed_fen{position = Pos} = ParsedFen, Game) -> % position
     Game2 = load_fen_position(Pos, Game),
+    load_parsed_fen(Tail, ParsedFen, Game2);
+load_parsed_fen([reserves|Tail], #parsed_fen{white_reserve = WhiteReserve, black_reserve = BlackReserve} = ParsedFen, Game) -> % reserves
+    Game2 = Game#{?GAME_KEY_WHITE_RESERVE := WhiteReserve, ?GAME_KEY_BLACK_RESERVE := BlackReserve},
     load_parsed_fen(Tail, ParsedFen, Game2);
 load_parsed_fen([sidetomove|Tail], #parsed_fen{sidetomove = Char} = ParsedFen, Game) -> % sidetomove
     SideToMove = case Char of
@@ -929,12 +1018,12 @@ load_fen_position([{Idx, Piece} | Tail], Game) ->
 %% validate_loaded_fen/1
 -spec validate_loaded_fen(bb_game()) -> ok | {error, bb_game_error()}.
 validate_loaded_fen(Game) ->
-     Steps = [kings_distance, pawns, enpassant, castling],
+     Steps = [kings_distance, pawns, pawn_count, piece_count, enpassant, castling],
      validate_loaded_fen(Steps, Game).
 
 %% validate_loaded_fen/2
 -spec validate_loaded_fen([Step], bb_game()) -> ok | {error, bb_game_error()} when
-    Step :: kings_distance | pawns | enpassant | castling.
+    Step :: kings_distance | pawns | pawn_count | piece_count | enpassant | castling.
 validate_loaded_fen([], _Game) ->
     ok;
 validate_loaded_fen([kings_distance | Tail], Game) ->
@@ -950,6 +1039,44 @@ validate_loaded_fen([pawns|Tail], Game) ->
     case ?IS_NOT(?RANK_1_BB, AllPawns) andalso ?IS_NOT(?RANK_8_BB, AllPawns) of
         true  -> validate_loaded_fen(Tail, Game);
         false -> {error, bb_edge_rank_occupied_by_pawns}
+    end;
+validate_loaded_fen([pawn_count|Tail], Game) ->
+    % In standard mode, max 8 pawns per side (chess rule)
+    % In bughouse mode, unlimited pawns (drops allowed)
+    Mode = get_mode(Game),
+    case Mode of
+        bughouse ->
+            validate_loaded_fen(Tail, Game);
+        standard ->
+            WhitePawnsBB = white_pawns_bb(Game),
+            BlackPawnsBB = black_pawns_bb(Game),
+            WhitePawns = erlang:length(binbo_bb:to_index_list(WhitePawnsBB)),
+            BlackPawns = erlang:length(binbo_bb:to_index_list(BlackPawnsBB)),
+            case (WhitePawns =< 8) andalso (BlackPawns =< 8) of
+                true  -> validate_loaded_fen(Tail, Game);
+                false when WhitePawns > 8 -> {error, {too_many_pawns, white, WhitePawns}};
+                false -> {error, {too_many_pawns, black, BlackPawns}}
+            end
+    end;
+validate_loaded_fen([piece_count|Tail], Game) ->
+    % In standard mode, max 16 pieces per side (chess rule: 8 pawns + 8 others)
+    % In bughouse mode, can have many more pieces (drops allowed)
+    Mode = get_mode(Game),
+    case Mode of
+        bughouse ->
+            validate_loaded_fen(Tail, Game);
+        standard ->
+            WhitePiecesBB = own_side_bb(?WHITE, Game),
+            BlackPiecesBB = own_side_bb(?BLACK, Game),
+            WhitePieces = erlang:length(binbo_bb:to_index_list(WhitePiecesBB)),
+            BlackPieces = erlang:length(binbo_bb:to_index_list(BlackPiecesBB)),
+            case (WhitePieces =< 16) andalso (BlackPieces =< 16) of
+                true  -> validate_loaded_fen(Tail, Game);
+                false when WhitePieces > 16 ->
+                    {error, {position, {bad_totals, white, {total, WhitePieces}}}};
+                false ->
+                    {error, {position, {bad_totals, black, {total, BlackPieces}}}}
+            end
     end;
 validate_loaded_fen([enpassant|Tail], Game) ->
     case validate_fen_enpassant(Game) of
@@ -1074,9 +1201,16 @@ make_move([set_piece | Tail], #move_info{ptype = Ptype} = MoveInfo, Game) ->
     make_move(Tail, MoveInfo, Game2);
 make_move([is_in_check | Tail], #move_info{pcolor = Pcolor} = MoveInfo, Game) ->
     % After updating position we should check whether the own king in check or not
-    case is_in_check(Pcolor, Game) of
-        false -> make_move(Tail, MoveInfo, Game);
-        true  -> {error, own_king_in_check}
+    % In bughouse mode, this check is skipped (king capture is allowed)
+    Mode = get_mode(Game),
+    case Mode of
+        bughouse ->
+            make_move(Tail, MoveInfo, Game);
+        standard ->
+            case is_in_check(Pcolor, Game) of
+                false -> make_move(Tail, MoveInfo, Game);
+                true  -> {error, {invalid_move, own_king_in_check}}
+            end
     end;
 make_move([enpassant | Tail], MoveInfo, Game) ->
     % Update enpassant info
@@ -1239,8 +1373,19 @@ finalize_move([hashmap | Tail], MoveInfo, Game) ->
     Game2 = update_hashmap(Game),
     finalize_move(Tail, MoveInfo, Game2);
 finalize_move([status | Tail], MoveInfo, Game) ->
-    #move_info{is_check = IsCheck, has_valid_moves = HasValidMoves} = MoveInfo,
-    Game2 = with_status(Game, HasValidMoves, IsCheck),
+    #move_info{is_check = IsCheck, has_valid_moves = HasValidMoves, captured = Captured, pcolor = Pcolor} = MoveInfo,
+    % Check if king was captured (Bughouse mode)
+    Game2 = case ?IS_PIECE(Captured) andalso (?PIECE_TYPE(Captured) =:= ?KING) of
+        true ->
+            % King captured! Determine winner
+            Winner = case Pcolor of
+                ?WHITE -> white_wins;
+                ?BLACK -> black_wins
+            end,
+            set_status_king_captured(Winner, Game);
+        false ->
+            with_status(Game, HasValidMoves, IsCheck)
+    end,
     finalize_move(Tail, MoveInfo, Game2).
 
 
@@ -1256,6 +1401,12 @@ get_fen(Game) ->
         {?A1_IDX,?H1_IDX},{?A2_IDX,?H2_IDX},{?A3_IDX,?H3_IDX},{?A4_IDX,?H4_IDX},
         {?A5_IDX,?H5_IDX},{?A6_IDX,?H6_IDX},{?A7_IDX,?H7_IDX},{?A8_IDX,?H8_IDX}
     ], []),
+    % 1b. Reserves (Bughouse extension)
+    Reserves = get_fen_reserves(Game),
+    Position = case Reserves of
+        <<>> -> Ranks;
+        _ -> <<Ranks/binary, Reserves/binary>>
+    end,
     % 2. Active color. "w" means White moves next, "b" means Black moves next.
     SideToMove = case get_sidetomove(Game) of ?WHITE -> <<$w>>; ?BLACK -> <<$b>> end,
     % 3. Castling availability. If neither side can castle, this is "-".
@@ -1270,7 +1421,7 @@ get_fen(Game) ->
     % 6. Fullmove number
     Fullmove = erlang:integer_to_binary(get_fullmove(Game)),
     % Joining parts into binary
-    FenParts = [Ranks, SideToMove, Castling, Enpa, Halfmove, Fullmove],
+    FenParts = [Position, SideToMove, Castling, Enpa, Halfmove, Fullmove],
     uef_bin:binary_join(FenParts, <<$\s>>).
 
 
@@ -1311,6 +1462,37 @@ get_fen_castling(Flag) ->
             _ -> Acc
         end
     end, <<>>, "KQkq").
+
+%% get_fen_reserves/1
+%% Generates reserve notation for Bughouse FEN
+%% Returns <<>> if no pieces in reserves, otherwise <<"[NP][bp]">> format
+-spec get_fen_reserves(bb_game()) -> binary().
+get_fen_reserves(Game) ->
+    WhiteReserve = get_reserve(?WHITE, Game),
+    BlackReserve = get_reserve(?BLACK, Game),
+    WhiteStr = reserve_to_string(WhiteReserve, upper),
+    BlackStr = reserve_to_string(BlackReserve, lower),
+    case {WhiteStr, BlackStr} of
+        {<<>>, <<>>} -> <<>>;
+        {W, <<>>} -> <<"[", W/binary, "]">>;
+        {<<>>, B} -> <<"[", B/binary, "]">>;
+        {W, B} -> <<"[", W/binary, "][", B/binary, "]">>
+    end.
+
+%% reserve_to_string/2
+%% Converts reserve map to string notation
+%% upper for white (PNBRQ), lower for black (pnbrq)
+-spec reserve_to_string(reserves(), upper | lower) -> binary().
+reserve_to_string(Reserve, Case) ->
+    Pieces = [{q, $Q, $q}, {r, $R, $r}, {b, $B, $b}, {n, $N, $n}, {p, $P, $p}],
+    lists:foldl(fun({Key, UpperChar, LowerChar}, Acc) ->
+        Count = maps:get(Key, Reserve, 0),
+        Char = case Case of upper -> UpperChar; lower -> LowerChar end,
+        case Count of
+            0 -> Acc;
+            N -> <<Acc/binary, (list_to_binary(lists:duplicate(N, Char)))/binary>>
+        end
+    end, <<>>, Pieces).
 
 
 %%%------------------------------------------------------------------------------

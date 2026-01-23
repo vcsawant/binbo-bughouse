@@ -124,10 +124,12 @@ fen_error(Reason) ->
 -spec split_fen(binary()) -> {ok, fen_part_tuples()} | error.
 split_fen(Fen) ->
     case uef_bin:split(Fen, <<$\s>>) of
-        [Position, SideToMove, Castling, Enpassant, Halfmove, Fullmove] -> % six parts
-            {ok, [{position, Position}, {sidetomove, SideToMove}, {castling, Castling}, {enpassant, Enpassant}, {halfmove, Halfmove}, {fullmove, Fullmove}]};
-        [Position, SideToMove, Castling, Enpassant] -> % four parts
-            {ok, [{position, Position}, {sidetomove, SideToMove}, {castling, Castling}, {enpassant, Enpassant}, {halfmove, <<"0">>}, {fullmove, <<"1">>}]};
+        [PositionWithReserves, SideToMove, Castling, Enpassant, Halfmove, Fullmove] -> % six parts
+            {Position, Reserves} = extract_reserves(PositionWithReserves),
+            {ok, [{position, Position}, {reserves, Reserves}, {sidetomove, SideToMove}, {castling, Castling}, {enpassant, Enpassant}, {halfmove, Halfmove}, {fullmove, Fullmove}]};
+        [PositionWithReserves, SideToMove, Castling, Enpassant] -> % four parts
+            {Position, Reserves} = extract_reserves(PositionWithReserves),
+            {ok, [{position, Position}, {reserves, Reserves}, {sidetomove, SideToMove}, {castling, Castling}, {enpassant, Enpassant}, {halfmove, <<"0">>}, {fullmove, <<"1">>}]};
         _ ->
             error
     end.
@@ -142,6 +144,87 @@ split_fen_position(Pos) ->
             error
     end.
 
+%% extract_reserves/1
+%% Extracts piece reserves from position string
+%% "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[NP]" -> {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", "[NP]"}
+%% "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR" -> {"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR", <<>>}
+-spec extract_reserves(binary()) -> {binary(), binary()}.
+extract_reserves(PositionWithReserves) ->
+    case binary:split(PositionWithReserves, <<"[">>) of
+        [Position, ReservesWithBracket] ->
+            % Extract reserves up to the closing bracket
+            Reserves = extract_all_reserves(<<"[", ReservesWithBracket/binary>>, <<>>),
+            {Position, Reserves};
+        [Position] ->
+            {Position, <<>>}
+    end.
+
+%% extract_all_reserves/2
+%% Recursively extracts all reserve groups [NP][bp] -> <<"[NP][bp]">>
+-spec extract_all_reserves(binary(), binary()) -> binary().
+extract_all_reserves(<<$[, Rest/binary>>, Acc) ->
+    case binary:split(Rest, <<"]">>) of
+        [ReserveGroup, Remaining] ->
+            NewAcc = <<Acc/binary, $[, ReserveGroup/binary, $]>>,
+            case Remaining of
+                <<$[, _/binary>> ->
+                    extract_all_reserves(Remaining, NewAcc);
+                _ ->
+                    NewAcc
+            end;
+        _ ->
+            Acc
+    end;
+extract_all_reserves(_, Acc) ->
+    Acc.
+
+%% parse_reserves/1
+%% Parses reserve notation into white and black reserve maps
+%% <<"[NP]">> -> {#{n=>1, p=>1, b=>0, r=>0, q=>0}, #{n=>0, p=>0, b=>0, r=>0, q=>0}}
+%% <<"[NP][bp]">> -> {#{n=>1, p=>1, b=>0, r=>0, q=>0}, #{n=>0, p=>1, b=>1, r=>0, q=>0}}
+-spec parse_reserves(binary()) -> {binbo_position:reserves(), binbo_position:reserves()}.
+parse_reserves(<<>>) ->
+    {#{p=>0, n=>0, b=>0, r=>0, q=>0}, #{p=>0, n=>0, b=>0, r=>0, q=>0}};
+parse_reserves(ReservesStr) ->
+    % Extract all characters between brackets
+    AllChars = extract_reserve_chars(ReservesStr, []),
+    % Count white (uppercase) and black (lowercase) pieces
+    count_reserves(AllChars, #{p=>0, n=>0, b=>0, r=>0, q=>0}, #{p=>0, n=>0, b=>0, r=>0, q=>0}).
+
+%% extract_reserve_chars/2
+-spec extract_reserve_chars(binary(), [byte()]) -> [byte()].
+extract_reserve_chars(<<>>, Acc) ->
+    lists:reverse(Acc);
+extract_reserve_chars(<<$[, Rest/binary>>, Acc) ->
+    case binary:split(Rest, <<"]">>) of
+        [Chars, Remaining] ->
+            CharList = binary_to_list(Chars),
+            extract_reserve_chars(Remaining, lists:reverse(CharList) ++ Acc);
+        _ ->
+            lists:reverse(Acc)
+    end;
+extract_reserve_chars(<<_, Rest/binary>>, Acc) ->
+    extract_reserve_chars(Rest, Acc).
+
+%% count_reserves/3
+-spec count_reserves([byte()], binbo_position:reserves(), binbo_position:reserves()) -> {binbo_position:reserves(), binbo_position:reserves()}.
+count_reserves([], WhiteReserve, BlackReserve) ->
+    {WhiteReserve, BlackReserve};
+count_reserves([Char | Rest], WhiteReserve, BlackReserve) ->
+    case Char of
+        $P -> count_reserves(Rest, maps:update_with(p, fun(V) -> V + 1 end, WhiteReserve), BlackReserve);
+        $N -> count_reserves(Rest, maps:update_with(n, fun(V) -> V + 1 end, WhiteReserve), BlackReserve);
+        $B -> count_reserves(Rest, maps:update_with(b, fun(V) -> V + 1 end, WhiteReserve), BlackReserve);
+        $R -> count_reserves(Rest, maps:update_with(r, fun(V) -> V + 1 end, WhiteReserve), BlackReserve);
+        $Q -> count_reserves(Rest, maps:update_with(q, fun(V) -> V + 1 end, WhiteReserve), BlackReserve);
+        $p -> count_reserves(Rest, WhiteReserve, maps:update_with(p, fun(V) -> V + 1 end, BlackReserve));
+        $n -> count_reserves(Rest, WhiteReserve, maps:update_with(n, fun(V) -> V + 1 end, BlackReserve));
+        $b -> count_reserves(Rest, WhiteReserve, maps:update_with(b, fun(V) -> V + 1 end, BlackReserve));
+        $r -> count_reserves(Rest, WhiteReserve, maps:update_with(r, fun(V) -> V + 1 end, BlackReserve));
+        $q -> count_reserves(Rest, WhiteReserve, maps:update_with(q, fun(V) -> V + 1 end, BlackReserve));
+        _ -> count_reserves(Rest, WhiteReserve, BlackReserve) % ignore unknown characters
+    end.
+
 %% parse/2
 -spec parse([fen_part_tuple()], parsed_fen()) -> {ok, parsed_fen()} | {error, fen_error()}.
 parse([], ParsedFen) ->
@@ -153,6 +236,9 @@ parse([{position, FenPosition} | Tail], ParsedFen) -> % 1. Piece placement
         {error, Reason} ->
             fen_error({position, Reason})
     end;
+parse([{reserves, ReservesStr} | Tail], ParsedFen) -> % Piece reserves (Bughouse extension)
+    {WhiteReserve, BlackReserve} = parse_reserves(ReservesStr),
+    parse(Tail, ParsedFen#parsed_fen{white_reserve = WhiteReserve, black_reserve = BlackReserve});
 parse([{sidetomove, SideToMove} | Tail], ParsedFen) -> % 2. Active color
     case SideToMove of
         <<"w">> -> parse(Tail, ParsedFen#parsed_fen{sidetomove = $w});
@@ -253,7 +339,11 @@ validate_pieces_totals(Totals) when is_map(Totals) ->
 validate_pieces_totals([]) -> ok;
 validate_pieces_totals([{Color, P, N, B, R, Q, K} | Tail]) ->
     Total = P + N + B + R + Q + K,
-    IsOk = (K =:= 1) andalso (Total < 17) andalso (P < 9),
+    % Note: Pawn count and total piece validation relaxed for bughouse mode
+    % Standard chess: max 16 pieces (8 pawns + 8 others)
+    % Bughouse: can have many more via drops - using generous limit of 32
+    % Mode-specific validation happens in validate_loaded_fen
+    IsOk = (K =:= 1) andalso (Total =< 32),
     case IsOk of
         true  ->
             validate_pieces_totals(Tail);
@@ -261,8 +351,6 @@ validate_pieces_totals([{Color, P, N, B, R, Q, K} | Tail]) ->
             {error, {no_kings, Color}};
         false when K > 1 ->
             {error, {too_many_kings, Color, K}};
-        false when P > 8 ->
-            {error, {too_many_pawns, Color, P}};
         false ->
             {error, {bad_totals, Color, {total, Total}, {pawns, P}, {knights, N}, {bishops, B}, {rooks, R}, {queens, Q}, {kings, K}}}
     end.

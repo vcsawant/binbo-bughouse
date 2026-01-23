@@ -54,7 +54,7 @@ groups() ->
 %% init_per_suite/1
 init_per_suite(Config) ->
     ok = binbo_test_lib:all_group_testcases_exported(?MODULE),
-    {ok, _} = binbo:start(),
+    {ok, _} = binbo_bughouse:start(),
     Config.
 
 %% end_per_suite/1
@@ -63,13 +63,13 @@ end_per_suite(_Config) ->
 
 %% init_per_testcase/2
 init_per_testcase(_TestCase, Config) ->
-    {ok, Pid} = binbo:new_server(),
+    {ok, Pid} = binbo_bughouse:new_server(),
     [{pid, Pid} | Config].
 
 %% end_per_testcase/2
 end_per_testcase(_TestCase, Config) ->
     Pid = get_pid(Config),
-    ok = binbo:stop_server(Pid),
+    ok = binbo_bughouse:stop_server(Pid),
     ok.
 
 %%%------------------------------------------------------------------------------
@@ -83,8 +83,8 @@ get_pid(Config) ->
 %% perft_init_game/3
 perft_init_game(Config, Fen) ->
     Pid = get_pid(Config),
-    {ok, continue} = binbo:new_game(Pid, Fen),
-    binbo:game_state(Pid).
+    {ok, continue} = binbo_bughouse:new_game(Pid, Fen),
+    binbo_bughouse:game_state(Pid).
 
 %%%------------------------------------------------------------------------------
 %%%   Perft
@@ -151,12 +151,12 @@ all_legal_moves_via_api(Config) ->
     Pid = get_pid(Config),
     Nodes = 44,
     % Load FEN of Position 5.
-    {ok, continue} = binbo:new_game(Pid, <<"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8">>),
-    {ok, BitIntMovelist} = binbo:all_legal_moves(Pid, bitint),
-    {ok, IntMovelist} = binbo:all_legal_moves(Pid, int),
-    {ok, BinMovelist} = binbo:all_legal_moves(Pid, bin),
-    {ok, StrMovelist} = binbo:all_legal_moves(Pid, str),
-    {ok, Count} = binbo:all_legal_moves(Pid, count),
+    {ok, continue} = binbo_bughouse:new_game(Pid, <<"rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8">>),
+    {ok, BitIntMovelist} = binbo_bughouse:all_legal_moves(Pid, bitint),
+    {ok, IntMovelist} = binbo_bughouse:all_legal_moves(Pid, int),
+    {ok, BinMovelist} = binbo_bughouse:all_legal_moves(Pid, bin),
+    {ok, StrMovelist} = binbo_bughouse:all_legal_moves(Pid, str),
+    {ok, Count} = binbo_bughouse:all_legal_moves(Pid, count),
     Nodes = erlang:length(BitIntMovelist),
     Nodes = erlang:length(IntMovelist),
     Nodes = erlang:length(BinMovelist),

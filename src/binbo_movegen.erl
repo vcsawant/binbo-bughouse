@@ -16,6 +16,8 @@
 
 -export([all_valid_moves/2, all_valid_moves/3]).
 -export([has_valid_moves/2]).
+-export([all_legal_drops/1, all_legal_drops/2]).
+-export([can_drop/3]).
 
 
 %%%------------------------------------------------------------------------------
@@ -76,6 +78,94 @@ all_valid_moves(Color, Game, MoveType) ->
 -spec has_valid_moves(color(), bb_game()) -> boolean().
 has_valid_moves(Color, Game) ->
     (any_valid_move(Color, Game) > 0).
+
+%% all_legal_drops/1
+%% Returns all legal drop moves for the current side to move
+-spec all_legal_drops(bb_game()) -> [binary()].
+all_legal_drops(Game) ->
+    Color = binbo_position:get_sidetomove(Game),
+    all_legal_drops(Color, Game).
+
+%% all_legal_drops/2
+%% Returns all legal drop moves for the specified color
+-spec all_legal_drops(color(), bb_game()) -> [binary()].
+all_legal_drops(Color, Game) ->
+    Reserve = binbo_position:get_reserve(Color, Game),
+    OccupiedBB = maps:get(bball, Game),
+
+    % Get all empty squares (mask to 64 bits)
+    EmptySquaresBB = (bnot OccupiedBB) band ?ALL_SQUARES_BB,
+
+    % Generate drops for each piece type in reserve
+    Drops = lists:foldl(fun({PieceKey, PieceType, PieceChar}, Acc) ->
+        Count = maps:get(PieceKey, Reserve, 0),
+        case Count > 0 of
+            true ->
+                % Generate drop squares for this piece type
+                DropSquares = case PieceType of
+                    ?PAWN ->
+                        % Pawns cannot be dropped on ranks 1 or 8
+                        EmptyNoPawnRanks = EmptySquaresBB band (bnot (?RANK_1_BB bor ?RANK_8_BB)),
+                        squares_to_drops(EmptyNoPawnRanks, PieceChar);
+                    _ ->
+                        squares_to_drops(EmptySquaresBB, PieceChar)
+                end,
+                DropSquares ++ Acc;
+            false ->
+                Acc
+        end
+    end, [], [
+        {p, ?PAWN, $P},
+        {n, ?KNIGHT, $N},
+        {b, ?BISHOP, $B},
+        {r, ?ROOK, $R},
+        {q, ?QUEEN, $Q}
+    ]),
+    lists:reverse(Drops).
+
+%% can_drop/3
+%% Checks if a specific drop is legal
+-spec can_drop(piece_type() | p | n | b | r | q, sq_notation() | sq_idx(), bb_game()) -> boolean().
+can_drop(PieceType, Square, Game) when is_atom(PieceType) ->
+    % Convert atom to piece type constant
+    PieceTypeInt = case PieceType of
+        p -> ?PAWN;
+        n -> ?KNIGHT;
+        b -> ?BISHOP;
+        r -> ?ROOK;
+        q -> ?QUEEN;
+        _ when is_integer(PieceType) -> PieceType
+    end,
+    can_drop(PieceTypeInt, Square, Game);
+can_drop(PieceType, Square, Game) when is_binary(Square) ->
+    % Convert square notation to index
+    ToIdx = binbo_board:notation_to_index(Square),
+    can_drop(PieceType, ToIdx, Game);
+can_drop(PieceType, ToIdx, Game) when is_integer(ToIdx) ->
+    Color = binbo_position:get_sidetomove(Game),
+    Reserve = binbo_position:get_reserve(Color, Game),
+    PieceKey = binbo_position:piece_type_to_atom(PieceType),
+    Count = maps:get(PieceKey, Reserve, 0),
+
+    % Check piece in reserve
+    case Count > 0 of
+        false -> false;
+        true ->
+            % Check square is empty
+            Piece = binbo_position:get_piece(ToIdx, Game),
+            case ?IS_PIECE(Piece) of
+                true -> false;
+                false ->
+                    % Check pawn rank restriction
+                    case PieceType =:= ?PAWN of
+                        true ->
+                            Rank = binbo_board:rank_of_index(ToIdx),
+                            (Rank =/= 0) andalso (Rank =/= 7);
+                        false ->
+                            true
+                    end
+            end
+    end.
 
 
 %%%------------------------------------------------------------------------------
@@ -219,3 +309,26 @@ maybe_movelist_with_promotion(Ptype, FromIdx, ToIdx, MoveType, MovesAcc) ->
                     [{From, To, q}, {From, To, r}, {From, To, b}, {From, To, n} | MovesAcc]
             end
     end.
+
+
+%%%------------------------------------------------------------------------------
+%%%   Drop Move Helpers (Bughouse)
+%%%------------------------------------------------------------------------------
+
+%% squares_to_drops/2
+%% Converts a bitboard of squares to drop notation strings
+-spec squares_to_drops(bb(), byte()) -> [binary()].
+squares_to_drops(BB, PieceChar) ->
+    squares_to_drops(BB, PieceChar, []).
+
+%% squares_to_drops/3
+-spec squares_to_drops(bb(), byte(), [binary()]) -> [binary()].
+squares_to_drops(0, _PieceChar, Acc) ->
+    lists:reverse(Acc);
+squares_to_drops(BB, PieceChar, Acc) ->
+    SquareBB = BB band (-BB), % Get least significant bit
+    Idx = binbo_bb:to_index(SquareBB),
+    Notation = binbo_board:index_to_notation(Idx),
+    DropNotation = <<PieceChar, $@, Notation/binary>>,
+    RestBB = BB bxor SquareBB, % Clear the bit
+    squares_to_drops(RestBB, PieceChar, [DropNotation | Acc]).

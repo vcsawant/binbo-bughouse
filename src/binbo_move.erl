@@ -20,6 +20,7 @@
 -export([validate_int_move/2]).
 -export([validate_move/5]).
 -export([enemy_color/1]).
+-export([validate_drop_move/2]).
 
 
 %%%------------------------------------------------------------------------------
@@ -28,6 +29,7 @@
 
 -include("binbo_board.hrl").
 -include("binbo_move.hrl").
+-include("binbo_position.hrl").
 
 %%%------------------------------------------------------------------------------
 %%%   Macros
@@ -66,7 +68,7 @@
 -type sq_error() :: invalid_square_notation.
 -type parse_error() :: empty_move | bad_move_value | invalid_move_string | bad_data_type | sq_error().
 -type piece_error() :: no_piece | sidetomove_mismatch.
--type chess_error() :: same_square | king_capture | own_piece_capture
+-type chess_error() :: same_square | {invalid_move, king_capture} | own_piece_capture
                     | {invalid_move, pname()}
                     | binbo_position:make_move_error().
 -type idx_move_error() :: {invalid_promotion_type, term()}
@@ -141,6 +143,18 @@ validate_move(Game, Piece, FromIdx, ToIdx, PromoType) ->
 -spec enemy_color(move_info()) -> color().
 enemy_color(#move_info{pcolor = Pcolor}) ->
     binbo_board:enemy_color(Pcolor).
+
+%% validate_drop_move/2
+%% Validates a piece drop move in Bughouse mode
+%% Drop notation: "P@e4" means drop a pawn on e4
+-spec validate_drop_move(binary() | string(), bb_game()) -> {ok, move_info(), bb_game()} | {error, move_error()}.
+validate_drop_move(DropMove, Game) ->
+    case parse_drop_move(DropMove) of
+        {ok, PieceType, ToIdx} ->
+            do_validate_drop(Game, PieceType, ToIdx);
+        {error, Reason} ->
+            {error, {parse, Reason}}
+    end.
 
 
 %%%------------------------------------------------------------------------------
@@ -254,9 +268,14 @@ do_validate_move([capture|Tail], Game, #move_info{to_idx = To, pcolor = Pcolor} 
     % Validate a capture.
     Captured = binbo_position:get_piece(To, Game),
     CaptColor = ?COLOR(Captured),
+    Mode = binbo_position:get_mode(Game),
     case ?IS_PIECE(Captured) of
-        true when ?PIECE_TYPE(Captured) =:= ?KING -> % king captured (error)
-            {error, king_capture};
+        true when ?PIECE_TYPE(Captured) =:= ?KING ->
+            % King capture: error in standard mode, allowed in bughouse mode
+            case Mode of
+                standard -> {error, {invalid_move, king_capture}};
+                bughouse -> do_validate_move(Tail, Game, MoveInfo#move_info{captured = Captured, captured_idx = To})
+            end;
         true when Pcolor =:= CaptColor -> % own piece captured (error)
             {error, own_piece_capture};
         true -> % enemy piece captured (ok)
@@ -510,3 +529,124 @@ san_starting_square(Ptype, Pcolor, From0, ToIdx, Game) ->
         false ->
             {error, illegal_san}
     end.
+
+
+%%%------------------------------------------------------------------------------
+%%%   Piece Drop (Bughouse)
+%%%------------------------------------------------------------------------------
+
+%% parse_drop_move/1
+%% Parses UCI drop notation: "P@e4" -> {ok, ?PAWN, 28}
+-spec parse_drop_move(binary() | string()) -> {ok, piece_type(), sq_idx()} | {error, parse_error()}.
+parse_drop_move(<<>>) ->
+    {error, empty_move};
+parse_drop_move(Drop) when is_binary(Drop) ->
+    case Drop of
+        <<PieceChar, $@, File, Rank>> when ?IS_VALID_FILE_RANK(File, Rank) ->
+            case char_to_piece_type(PieceChar) of
+                {ok, PieceType} ->
+                    ToIdx = binbo_board:notation_to_index(File, Rank),
+                    {ok, PieceType, ToIdx};
+                error ->
+                    {error, bad_move_value}
+            end;
+        _ ->
+            {error, bad_move_value}
+    end;
+parse_drop_move(Drop) when is_list(Drop) ->
+    try erlang:list_to_binary(Drop) of
+        Bin -> parse_drop_move(Bin)
+    catch
+        _:_ -> {error, invalid_move_string}
+    end;
+parse_drop_move(_) ->
+    {error, bad_data_type}.
+
+%% char_to_piece_type/1
+%% Converts piece character to piece type (case insensitive for drops)
+-spec char_to_piece_type(byte()) -> {ok, piece_type()} | error.
+char_to_piece_type($P) -> {ok, ?PAWN};
+char_to_piece_type($p) -> {ok, ?PAWN};
+char_to_piece_type($N) -> {ok, ?KNIGHT};
+char_to_piece_type($n) -> {ok, ?KNIGHT};
+char_to_piece_type($B) -> {ok, ?BISHOP};
+char_to_piece_type($b) -> {ok, ?BISHOP};
+char_to_piece_type($R) -> {ok, ?ROOK};
+char_to_piece_type($r) -> {ok, ?ROOK};
+char_to_piece_type($Q) -> {ok, ?QUEEN};
+char_to_piece_type($q) -> {ok, ?QUEEN};
+char_to_piece_type(_) -> error.
+
+%% do_validate_drop/3
+%% Validates and executes a piece drop
+-spec do_validate_drop(bb_game(), piece_type(), sq_idx()) -> {ok, move_info(), bb_game()} | {error, move_error()}.
+do_validate_drop(Game, PieceType, ToIdx) ->
+    % Check game status
+    case binbo_position:get_status(Game) of
+        ?GAME_STATUS_INPROGRESS ->
+            SideToMove = binbo_position:get_sidetomove(Game),
+
+            % Check if piece exists in reserve
+            Reserve = binbo_position:get_reserve(SideToMove, Game),
+            PieceKey = binbo_position:piece_type_to_atom(PieceType),
+            Count = maps:get(PieceKey, Reserve, 0),
+
+            case Count > 0 of
+                false ->
+                    {error, {invalid_move, no_piece_in_reserve}};
+                true ->
+                    % Check target square is empty
+                    TargetPiece = binbo_position:get_piece(ToIdx, Game),
+                    case ?IS_PIECE(TargetPiece) of
+                        true ->
+                            {error, {invalid_move, square_occupied}};
+                        false ->
+                            % Check pawn drop restrictions (not on rank 1 or 8)
+                            case PieceType =:= ?PAWN of
+                                true ->
+                                    Rank = binbo_board:rank_of_index(ToIdx),
+                                    case (Rank =:= 0) orelse (Rank =:= 7) of
+                                        true -> {error, {invalid_move, pawn_on_backrank}};
+                                        false -> execute_drop(Game, PieceType, SideToMove, ToIdx)
+                                    end;
+                                false ->
+                                    execute_drop(Game, PieceType, SideToMove, ToIdx)
+                            end
+                    end
+            end;
+        GameOverStatus ->
+            {error, {game_over, GameOverStatus}}
+    end.
+
+%% execute_drop/4
+%% Executes the drop move: remove from reserve, place on board, update game state
+-spec execute_drop(bb_game(), piece_type(), color(), sq_idx()) -> {ok, move_info(), bb_game()}.
+execute_drop(Game, PieceType, Color, ToIdx) ->
+    % Remove piece from reserve
+    {ok, Game2} = binbo_position:remove_piece_from_reserve(PieceType, Color, Game),
+
+    % Create the piece
+    Piece = ?TYPE_TO_PIECE(PieceType, Color),
+
+    % Place piece on board
+    Game3 = binbo_position:set_piece(ToIdx, Piece, Game2),
+
+    % Create move info for the drop
+    MoveInfo = #move_info{
+        from_idx = undefined,
+        to_idx = ToIdx,
+        from_bb = ?EMPTY_BB,
+        to_bb = ?SQUARE_BB(ToIdx),
+        piece = Piece,
+        pcolor = Color,
+        ptype = PieceType,
+        captured = 0,
+        captured_idx = undefined,
+        promo = undefined,
+        castling = 0,
+        is_check = false,
+        has_valid_moves = true
+    },
+
+    % Return game before finalization (finalize_move will be called by binbo_game)
+    {ok, MoveInfo, Game3}.

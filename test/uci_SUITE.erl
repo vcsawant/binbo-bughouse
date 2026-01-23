@@ -43,12 +43,12 @@ groups() ->
 %% init_per_suite/1
 init_per_suite(Config) ->
     ok = binbo_test_lib:all_group_testcases_exported(?MODULE),
-    {ok, _} = binbo:start(),
+    {ok, _} = binbo_bughouse:start(),
     Config.
 
 %% end_per_suite/1
 end_per_suite(_Config) ->
-    ok = binbo:stop(),
+    ok = binbo_bughouse:stop(),
     ok.
 
 %% init_per_testcase/2
@@ -94,88 +94,88 @@ uci_test_play_game(Config) ->
     InitialFen = binbo_fen:initial(),
 
     % Start new process for the game
-    {ok, Pid} = binbo:new_server(),
+    {ok, Pid} = binbo_bughouse:new_server(),
 
     % Start new game with engine (initial FEN)
-    {ok, continue} = binbo:new_uci_game(Pid, #{engine_path => EnginePath}),
+    {ok, continue} = binbo_bughouse:new_uci_game(Pid, #{engine_path => EnginePath}),
 
     % Start new game with engine (given FEN)
-    {ok, continue} = binbo:new_uci_game(Pid, #{engine_path => EnginePath, fen => InitialFen}),
+    {ok, continue} = binbo_bughouse:new_uci_game(Pid, #{engine_path => EnginePath, fen => InitialFen}),
 
     % Best move
-    {ok, BestMove1} = binbo:uci_bestmove(Pid),
-    {ok, BestMove2} = binbo:uci_bestmove(Pid, #{}),
-    {ok, BestMove3} = binbo:uci_bestmove(Pid, #{movetime => 100}),
+    {ok, BestMove1} = binbo_bughouse:uci_bestmove(Pid),
+    {ok, BestMove2} = binbo_bughouse:uci_bestmove(Pid, #{}),
+    {ok, BestMove3} = binbo_bughouse:uci_bestmove(Pid, #{movetime => 100}),
     true = erlang:is_binary(BestMove1),
     true = erlang:is_binary(BestMove2),
     true = erlang:is_binary(BestMove3),
 
     % Play
-    {ok, continue, EngineMove1} = binbo:uci_play(Pid, #{movetime => 100}, <<"e2e4">>),
-    {ok, continue, EngineMove2} = binbo:uci_play(Pid, #{}),
+    {ok, continue, EngineMove1} = binbo_bughouse:uci_play(Pid, #{movetime => 100}, <<"e2e4">>),
+    {ok, continue, EngineMove2} = binbo_bughouse:uci_play(Pid, #{}),
     true = erlang:is_binary(EngineMove1),
     true = erlang:is_binary(EngineMove2),
 
     % Change position back to initial, make moves and sync
-    {ok, continue} = binbo:uci_set_position(Pid, InitialFen),
-    {ok, continue} = binbo:move(Pid, <<"e2e4">>),
-    {ok, continue} = binbo:move(Pid, <<"e7e5">>),
-    ok = binbo:uci_sync_position(Pid),
+    {ok, continue} = binbo_bughouse:uci_set_position(Pid, InitialFen),
+    {ok, continue} = binbo_bughouse:move(Pid, <<"e2e4">>),
+    {ok, continue} = binbo_bughouse:move(Pid, <<"e7e5">>),
+    ok = binbo_bughouse:uci_sync_position(Pid),
 
     % Set UCI mode on
-    ok = binbo:uci_mode(Pid),
+    ok = binbo_bughouse:uci_mode(Pid),
 
     % Set default message handler
-    ok = binbo:set_uci_handler(Pid, default),
+    ok = binbo_bughouse:set_uci_handler(Pid, default),
     % Send command
-    ok = binbo:uci_command_call(Pid, "uci"),
+    ok = binbo_bughouse:uci_command_call(Pid, "uci"),
 
     % Set custom message handler
     Self = erlang:self(),
-    ok = binbo:set_uci_handler(Pid, fun(Msg) -> Self ! Msg end),
-    ok = binbo:uci_command_cast(Pid, "uci"),
-    ok = binbo:set_uci_handler(Pid, undefined),
+    ok = binbo_bughouse:set_uci_handler(Pid, fun(Msg) -> Self ! Msg end),
+    ok = binbo_bughouse:uci_command_cast(Pid, "uci"),
+    ok = binbo_bughouse:set_uci_handler(Pid, undefined),
 
     % Set invalid message handler
-    {error, invalid_handler} = binbo:set_uci_handler(Pid, test_invalid),
-    {error, bad_function_arity} = binbo:set_uci_handler(Pid, fun(Msg1, Msg2) -> io:format("~p ~p", [Msg1, Msg2]) end),
+    {error, invalid_handler} = binbo_bughouse:set_uci_handler(Pid, test_invalid),
+    {error, bad_function_arity} = binbo_bughouse:set_uci_handler(Pid, fun(Msg1, Msg2) -> io:format("~p ~p", [Msg1, Msg2]) end),
 
     % Send invalid command
-    ok = binbo:uci_command_call(Pid, "invalid command"),
-    ok = binbo:uci_command_cast(Pid, "invalid command"),
+    ok = binbo_bughouse:uci_command_call(Pid, "invalid command"),
+    ok = binbo_bughouse:uci_command_cast(Pid, "invalid command"),
 
     % Send 'quit'
-    ok = binbo:uci_command_call(Pid, "quit"),
+    ok = binbo_bughouse:uci_command_call(Pid, "quit"),
     _ = timer:sleep(500),
-    {error,no_uci_connection} = binbo:uci_command_call(Pid, "uci"),
-    ok = binbo:uci_command_cast(Pid, "uci"),
+    {error,no_uci_connection} = binbo_bughouse:uci_command_call(Pid, "uci"),
+    ok = binbo_bughouse:uci_command_cast(Pid, "uci"),
 
     % Stop the game process
-    ok = binbo:stop_server(Pid),
+    ok = binbo_bughouse:stop_server(Pid),
     ok.
 
 %% uci_test_failed_connection/1
 uci_test_failed_connection(_Config) ->
     % Start new process for the game
-    {ok, Pid} = binbo:new_server(),
+    {ok, Pid} = binbo_bughouse:new_server(),
 
     % Connect to local engine
-    {error,{uci_connection_failed,enoent}} = binbo:new_uci_game(Pid, #{
+    {error,{uci_connection_failed,enoent}} = binbo_bughouse:new_uci_game(Pid, #{
         engine_path => "/usr/local/bin/stockfish-test-0123456789"
     }),
 
     % Connect over TCP
-    {error,{uci_connection_failed,nxdomain}} = binbo:new_uci_game(Pid, #{
+    {error,{uci_connection_failed,nxdomain}} = binbo_bughouse:new_uci_game(Pid, #{
         engine_path => {"localhost-test-0123456789", 9011, 1000}
     }),
 
     % Send commands
-    ok = binbo:uci_command_cast(Pid, "uci"),
-    {error,no_uci_connection} = binbo:uci_mode(Pid),
-    {error,no_uci_connection} = binbo:uci_command_call(Pid, "uci"),
+    ok = binbo_bughouse:uci_command_cast(Pid, "uci"),
+    {error,no_uci_connection} = binbo_bughouse:uci_mode(Pid),
+    {error,no_uci_connection} = binbo_bughouse:uci_command_call(Pid, "uci"),
 
     % Stop the game process
-    ok = binbo:stop_server(Pid),
+    ok = binbo_bughouse:stop_server(Pid),
     ok.
 
 %% validate_engine_file_path/1

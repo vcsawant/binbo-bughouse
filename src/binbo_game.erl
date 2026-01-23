@@ -14,18 +14,22 @@
 
 -module(binbo_game).
 
--export([new/1]).
+-export([new/1, new/2]).
 -export([move/3, load_pgn/1, load_pgn_file/1]).
 -export([status/1, draw/2, set_winner/3]).
 -export([pretty_board/2, get_fen/1]).
 -export([all_legal_moves/2]).
 -export([side_to_move/1]).
 -export([get_pieces_list/2]).
+%% Bughouse-specific exports
+-export([get_reserves/1, add_to_reserve/3]).
+-export([drop_move/2, all_legal_drops/1, can_drop/3]).
 
 %%%------------------------------------------------------------------------------
 %%%   Includes
 %%%------------------------------------------------------------------------------
 
+-include("binbo_board.hrl").
 -include("binbo_move.hrl").
 
 %%%------------------------------------------------------------------------------
@@ -69,9 +73,16 @@
 new(initial) ->
     new(binbo_fen:initial());
 new(Fen) ->
+    new(Fen, #{}).
+
+%% new/2
+-spec new(game_fen(), #{mode => standard | bughouse}) -> {ok, {bb_game(), game_status()}} | {error, init_error()}.
+new(initial, Opts) ->
+    new(binbo_fen:initial(), Opts);
+new(Fen, Opts) ->
     case binbo_fen:parse(Fen) of
         {ok, ParsedFen} ->
-            init_game(ParsedFen);
+            init_game(ParsedFen, Opts);
         Error ->
             Error
     end.
@@ -186,6 +197,64 @@ get_pieces_list(Game, SquareType) ->
         false -> {error, {bad_game, Game}}
     end.
 
+
+%%%------------------------------------------------------------------------------
+%%%   API (Bughouse-specific)
+%%%------------------------------------------------------------------------------
+
+%% get_reserves/1
+-spec get_reserves(game()) -> {ok, #{white => binbo_position:reserves(), black => binbo_position:reserves()}} | {error, bad_game_term()}.
+get_reserves(Game) when is_map(Game) ->
+    WhiteReserve = binbo_position:get_reserve(16#00, Game),  % ?WHITE
+    BlackReserve = binbo_position:get_reserve(16#10, Game),  % ?BLACK
+    {ok, #{white => WhiteReserve, black => BlackReserve}};
+get_reserves(Game) ->
+    {error, {bad_game, Game}}.
+
+%% add_to_reserve/3
+-spec add_to_reserve(white | black, p | n | b | r | q, game()) -> {ok, bb_game()} | {error, bad_game_term()}.
+add_to_reserve(Color, PieceType, Game) when is_map(Game) ->
+    ColorInt = case Color of white -> 16#00; black -> 16#10 end,  % ?WHITE, ?BLACK
+    PieceTypeInt = case PieceType of
+        p -> 16#01;  % ?PAWN
+        n -> 16#02;  % ?KNIGHT
+        b -> 16#03;  % ?BISHOP
+        r -> 16#04;  % ?ROOK
+        q -> 16#05   % ?QUEEN
+    end,
+    Game2 = binbo_position:add_piece_to_reserve(PieceTypeInt, ColorInt, Game),
+    {ok, Game2};
+add_to_reserve(_Color, _PieceType, Game) ->
+    {error, {bad_game, Game}}.
+
+%% drop_move/2
+-spec drop_move(binary(), game()) -> {ok, {bb_game(), game_status()}} | {error, move_error()}.
+drop_move(DropMove, Game) when is_map(Game) ->
+    case binbo_move:validate_drop_move(DropMove, Game) of
+        {ok, MoveInfo, Game2} ->
+            {ok, finalize_move(MoveInfo, Game2)};
+        {error, Reason} ->
+            {error, {Reason, DropMove}}
+    end;
+drop_move(_DropMove, Game) ->
+    {error, {bad_game, Game}}.
+
+%% all_legal_drops/1
+-spec all_legal_drops(game()) -> {ok, [binary()]} | {error, bad_game_term()}.
+all_legal_drops(Game) when is_map(Game) ->
+    Drops = binbo_movegen:all_legal_drops(Game),
+    {ok, Drops};
+all_legal_drops(Game) ->
+    {error, {bad_game, Game}}.
+
+%% can_drop/3
+-spec can_drop(p | n | b | r | q, binary(), game()) -> boolean().
+can_drop(PieceType, Square, Game) when is_map(Game) ->
+    binbo_movegen:can_drop(PieceType, Square, Game);
+can_drop(_PieceType, _Square, _Game) ->
+    false.
+
+
 %%%------------------------------------------------------------------------------
 %%%   Internal functions
 %%%------------------------------------------------------------------------------
@@ -193,7 +262,17 @@ get_pieces_list(Game, SquareType) ->
 %% init_game/1
 -spec init_game(parsed_fen()) -> {ok, {bb_game(), game_status()}} | {error, bb_game_error()}.
 init_game(ParsedFen) ->
-    Game = binbo_position:init_bb_game(ParsedFen),
+    init_game(ParsedFen, #{}).
+
+%% init_game/2
+-spec init_game(parsed_fen(), #{mode => standard | bughouse}) -> {ok, {bb_game(), game_status()}} | {error, bb_game_error()}.
+init_game(ParsedFen, Opts) ->
+    Game0 = binbo_position:init_bb_game(ParsedFen),
+    % Apply mode from options if provided
+    Game = case maps:get(mode, Opts, standard) of
+        bughouse -> Game0#{mode => bughouse};
+        standard -> Game0
+    end,
     case binbo_position:validate_loaded_fen(Game) of
         ok ->
             {ok, finalize_fen(Game)};
@@ -214,16 +293,27 @@ finalize_fen(Game0) ->
 %% finalize_move/2
 -spec finalize_move(move_info(), bb_game()) -> {bb_game(), game_status()}.
 finalize_move(MoveInfo, Game0) ->
-    EnemyColor = binbo_move:enemy_color(MoveInfo),
-    HasValidMoves = binbo_movegen:has_valid_moves(EnemyColor, Game0),
-    IsCheck = binbo_position:is_in_check(EnemyColor, Game0),
-    MoveInfo2 = MoveInfo#move_info{
-        is_check = IsCheck,
-        has_valid_moves = HasValidMoves
-    },
-    Game = binbo_position:finalize_move(MoveInfo2, Game0),
-    Status = binbo_position:get_status(Game),
-    {Game, Status}.
+    % Check if king was captured - if so, skip check calculation
+    #move_info{captured = Captured} = MoveInfo,
+    case ?IS_PIECE(Captured) andalso (?PIECE_TYPE(Captured) =:= ?KING) of
+        true ->
+            % King captured - skip check calculation (no king to check)
+            Game = binbo_position:finalize_move(MoveInfo, Game0),
+            Status = binbo_position:get_status(Game),
+            {Game, Status};
+        false ->
+            % Normal move - calculate check and valid moves
+            EnemyColor = binbo_move:enemy_color(MoveInfo),
+            HasValidMoves = binbo_movegen:has_valid_moves(EnemyColor, Game0),
+            IsCheck = binbo_position:is_in_check(EnemyColor, Game0),
+            MoveInfo2 = MoveInfo#move_info{
+                is_check = IsCheck,
+                has_valid_moves = HasValidMoves
+            },
+            Game = binbo_position:finalize_move(MoveInfo2, Game0),
+            Status = binbo_position:get_status(Game),
+            {Game, Status}
+    end.
 
 
 %% load_san_moves
