@@ -22,7 +22,7 @@
 -export([side_to_move/1]).
 -export([get_pieces_list/2]).
 %% Bughouse-specific exports
--export([get_reserves/1, add_to_reserve/3]).
+-export([get_reserves/1, add_to_reserve/3, get_capture_info/3]).
 -export([drop_move/2, all_legal_drops/1, can_drop/3]).
 
 %%%------------------------------------------------------------------------------
@@ -225,6 +225,19 @@ add_to_reserve(Color, PieceType, Game) when is_map(Game) ->
     Game2 = binbo_position:add_piece_to_reserve(PieceTypeInt, ColorInt, Game),
     {ok, Game2};
 add_to_reserve(_Color, _PieceType, Game) ->
+    {error, {bad_game, Game}}.
+
+%% get_capture_info/3
+-spec get_capture_info(binary(), binary(), game()) -> {ok, {atom(), boolean()}} | {ok, no_capture} | {error, term()}.
+get_capture_info(FromSquare, ToSquare, Game) when is_map(Game) ->
+    % Convert square notation to indices
+    case {binbo_move:notation_to_index(FromSquare), binbo_move:notation_to_index(ToSquare)} of
+        {{ok, FromIdx}, {ok, ToIdx}} ->
+            binbo_position:get_capture_info(FromIdx, ToIdx, Game);
+        _Error ->
+            {error, invalid_square}
+    end;
+get_capture_info(_FromSquare, _ToSquare, Game) ->
     {error, {bad_game, Game}}.
 
 %% drop_move/2

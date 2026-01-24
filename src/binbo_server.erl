@@ -30,7 +30,7 @@
 -export([set_uci_handler/2]).
 -export([get_pieces_list/2]).
 %% Bughouse-specific exports
--export([get_reserves/1, add_to_reserve/3]).
+-export([get_reserves/1, add_to_reserve/3, get_capture_info/3]).
 -export([drop_move/3, drop_move_uci/2]).
 -export([all_legal_drops/1, can_drop/3]).
 
@@ -260,6 +260,9 @@ do_handle_call({add_to_reserve, Color, PieceType}, _From, #state{game = Game0} =
             {Error, State0}
     end,
     {reply, Reply, NewState};
+do_handle_call({get_capture_info, FromSquare, ToSquare}, _From, #state{game = Game} = State) ->
+    Reply = binbo_game:get_capture_info(FromSquare, ToSquare, Game),
+    {reply, Reply, State};
 do_handle_call({drop_move, DropMove}, _From, #state{game = Game0} = State0) ->
     {Reply, NewState} = case binbo_game:drop_move(DropMove, Game0) of
         {ok, {Game, GameStatus}} ->
@@ -521,6 +524,11 @@ get_reserves(Pid) ->
 -spec add_to_reserve(pid(), white | black, p | n | b | r | q) -> ok | {error, term()}.
 add_to_reserve(Pid, Color, PieceType) ->
     call(Pid, {add_to_reserve, Color, PieceType}).
+
+%% get_capture_info/3
+-spec get_capture_info(pid(), binary(), binary()) -> {ok, {atom(), boolean()}} | {ok, no_capture}.
+get_capture_info(Pid, FromSquare, ToSquare) ->
+    call(Pid, {get_capture_info, FromSquare, ToSquare}).
 
 %% drop_move/3
 -spec drop_move(pid(), p | n | b | r | q, binary()) -> game_move_ret().

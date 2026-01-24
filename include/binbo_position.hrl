@@ -55,6 +55,7 @@
 -define(GAME_KEY_WHITE_RESERVE, white_reserve).
 -define(GAME_KEY_BLACK_RESERVE, black_reserve).
 -define(GAME_KEY_MODE, mode).
+-define(GAME_KEY_PROMOTED_PIECES, promoted_pieces).
 
 %%%------------------------------------------------------------------------------
 %%%   Game status

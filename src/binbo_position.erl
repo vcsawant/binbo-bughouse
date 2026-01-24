@@ -23,6 +23,7 @@
 -export([get_mode/1]).
 -export([piece_type_to_atom/1]).
 -export([set_piece/3]).
+-export([get_capture_info/3]).
 -export([
     pawn_moves_bb/3, pawn_moves_bb/4,
     knight_moves_bb/3,
@@ -408,6 +409,23 @@ piece_type_to_atom(?BISHOP) -> b;
 piece_type_to_atom(?ROOK)   -> r;
 piece_type_to_atom(?QUEEN)  -> q.
 
+%% get_capture_info/3
+%% Returns information about a potential capture.
+%% If the move captures a piece, returns {ok, {PieceTypeAtom, WasPromoted}}.
+%% If no capture, returns {ok, no_capture}.
+-spec get_capture_info(sq_idx(), sq_idx(), bb_game()) -> {ok, {atom(), boolean()}} | {ok, no_capture}.
+get_capture_info(_FromIdx, ToIdx, Game) ->
+    case get_piece(ToIdx, Game) of
+        ?EMPTY_SQUARE ->
+            {ok, no_capture};
+        Piece ->
+            PieceType = ?PIECE_TYPE(Piece),
+            PieceTypeAtom = piece_type_to_atom(PieceType),
+            #{?GAME_KEY_PROMOTED_PIECES := PromotedPieces} = Game,
+            WasPromoted = maps:is_key(ToIdx, PromotedPieces),
+            {ok, {PieceTypeAtom, WasPromoted}}
+    end.
+
 %% empty_bb_game/0
 -spec empty_bb_game() -> empty_bb_game().
 empty_bb_game() ->
@@ -430,7 +448,8 @@ empty_bb_game() ->
         ?GAME_KEY_STATUS => ?GAME_STATUS_INPROGRESS,
         ?GAME_KEY_WHITE_RESERVE => init_empty_reserves(),
         ?GAME_KEY_BLACK_RESERVE => init_empty_reserves(),
-        ?GAME_KEY_MODE => standard
+        ?GAME_KEY_MODE => standard,
+        ?GAME_KEY_PROMOTED_PIECES => #{}
     },
     lists:foldl(fun(SqIdx, M) ->
         M#{SqIdx => ?EMPTY_SQUARE}
@@ -460,15 +479,19 @@ remove_piece(Idx, Game) ->
     Pkey = ?PIECE_GAME_KEY(Piece),
     Pcolor = ?COLOR(Piece),
     SideKey = ?OWN_SIDE_KEY(Pcolor),
-    #{Pkey := PiecesBB, SideKey := SideBB, ?GAME_KEY_OCCUPIED := AllPiecesBB, ?GAME_KEY_POS_HASH := PosHash} = Game,
+    #{Pkey := PiecesBB, SideKey := SideBB, ?GAME_KEY_OCCUPIED := AllPiecesBB, ?GAME_KEY_POS_HASH := PosHash,
+      ?GAME_KEY_PROMOTED_PIECES := PromotedPieces} = Game,
     SquareBB = ?SQUARE_BB(Idx),
     PosHash2 = PosHash bxor binbo_hash:piece_hash(Piece, Idx),
+    % Remove from promoted pieces if it was promoted
+    NewPromotedPieces = maps:remove(Idx, PromotedPieces),
     Game#{
         Idx := ?EMPTY_SQUARE,
         Pkey := (PiecesBB band (bnot SquareBB)),
         SideKey := (SideBB band (bnot SquareBB)),
         ?GAME_KEY_OCCUPIED := (AllPiecesBB band (bnot SquareBB)),
-        ?GAME_KEY_POS_HASH := PosHash2
+        ?GAME_KEY_POS_HASH := PosHash2,
+        ?GAME_KEY_PROMOTED_PIECES := NewPromotedPieces
     }.
 
 
@@ -1183,7 +1206,13 @@ make_move([is_to_corner | Tail], #move_info{to_bb = ToBB} = MoveInfo, Game) ->
     make_move(Tail, MoveInfo, Game2);
 make_move([remove_piece | Tail], MoveInfo, Game) ->
     % Remove moving piece from starting square and handle capture
-    Game2 = make_move_remove_piece(MoveInfo, Game),
+    #move_info{from_idx = FromIdx} = MoveInfo,
+    % Check if the piece being moved is a promoted piece
+    #{?GAME_KEY_PROMOTED_PIECES := PromotedPieces} = Game,
+    WasPromoted = maps:is_key(FromIdx, PromotedPieces),
+    % Store this info temporarily (we'll use it in set_piece step)
+    Game1 = Game#{moving_promoted => WasPromoted},
+    Game2 = make_move_remove_piece(MoveInfo, Game1),
     make_move(Tail, MoveInfo, Game2);
 make_move([set_piece | Tail], #move_info{ptype = Ptype} = MoveInfo, Game) ->
     % Set piece to target square
@@ -1194,11 +1223,24 @@ make_move([set_piece | Tail], #move_info{ptype = Ptype} = MoveInfo, Game) ->
             make_king_move(MoveInfo, Game);
         ?ROOK -> % rook
             make_rook_move(MoveInfo, Game);
-        _Other -> % other piece type
+        _Other -> % other piece type (knight, bishop, queen)
             #move_info{to_idx = ToIdx, piece = Piece} = MoveInfo,
-            set_piece(ToIdx, Piece, Game)
+            % Check if this was a promoted piece moving
+            WasPromoted = maps:get(moving_promoted, Game, false),
+            Game1 = set_piece(ToIdx, Piece, Game),
+            % If it was promoted, mark the new square as promoted
+            case WasPromoted of
+                true ->
+                    #{?GAME_KEY_PROMOTED_PIECES := PromotedPieces} = Game1,
+                    NewPromotedPieces = maps:put(ToIdx, true, PromotedPieces),
+                    Game1#{?GAME_KEY_PROMOTED_PIECES := NewPromotedPieces};
+                false ->
+                    Game1
+            end
     end,
-    make_move(Tail, MoveInfo, Game2);
+    % Clean up temporary flag
+    Game3 = maps:remove(moving_promoted, Game2),
+    make_move(Tail, MoveInfo, Game3);
 make_move([is_in_check | Tail], #move_info{pcolor = Pcolor} = MoveInfo, Game) ->
     % After updating position we should check whether the own king in check or not
     % In bughouse mode, this check is skipped (king capture is allowed)
@@ -1248,7 +1290,11 @@ make_pawn_move(#move_info{to_bb = ToBB} = MoveInfo, Game) when ?IS_AND(ToBB, ?RA
     % Handle promotion
     #move_info{to_idx = ToIdx, pcolor = Pcolor, promo = PromoType} = MoveInfo,
     PromoPiece = ?TYPE_TO_PIECE(PromoType, Pcolor),
-    set_piece(ToIdx, PromoPiece, Game);
+    % Mark this square as containing a promoted piece
+    #{?GAME_KEY_PROMOTED_PIECES := PromotedPieces} = Game,
+    NewPromotedPieces = maps:put(ToIdx, true, PromotedPieces),
+    Game2 = Game#{?GAME_KEY_PROMOTED_PIECES := NewPromotedPieces},
+    set_piece(ToIdx, PromoPiece, Game2);
 make_pawn_move(#move_info{to_idx = ToIdx, piece = Pawn}, Game) ->
     set_piece(ToIdx, Pawn, Game).
 

@@ -37,6 +37,7 @@
 -export([drop_move/3, drop_move_uci/2]).
 -export([all_legal_drops/1]).
 -export([can_drop/3]).
+-export([get_capture_info/3]).
 
 -define(APPLICATION, ?MODULE).
 
@@ -252,6 +253,16 @@ get_reserves(Pid) ->
 %% @end
 add_to_reserve(Pid, Color, PieceType) ->
     binbo_server:add_to_reserve(Pid, Color, PieceType).
+
+%% get_capture_info/3
+-spec get_capture_info(pid(), binary(), binary()) -> {ok, {atom(), boolean()}} | {ok, no_capture}.
+%% @doc
+%% Returns information about what piece (if any) would be captured by a move from FromSquare to ToSquare.
+%% Returns {ok, {PieceType, WasPromoted}} if a piece would be captured, or {ok, no_capture} if not.
+%% This should be called BEFORE making the move to preserve promoted piece information.
+%% @end
+get_capture_info(Pid, FromSquare, ToSquare) ->
+    binbo_server:get_capture_info(Pid, FromSquare, ToSquare).
 
 %% drop_move/3
 -spec drop_move(pid(), p | n | b | r | q, binary()) -> binbo_server:game_move_ret().
