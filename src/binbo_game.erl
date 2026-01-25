@@ -231,12 +231,9 @@ add_to_reserve(_Color, _PieceType, Game) ->
 -spec get_capture_info(binary(), binary(), game()) -> {ok, {atom(), boolean()}} | {ok, no_capture} | {error, term()}.
 get_capture_info(FromSquare, ToSquare, Game) when is_map(Game) ->
     % Convert square notation to indices
-    case {binbo_move:notation_to_index(FromSquare), binbo_move:notation_to_index(ToSquare)} of
-        {{ok, FromIdx}, {ok, ToIdx}} ->
-            binbo_position:get_capture_info(FromIdx, ToIdx, Game);
-        _Error ->
-            {error, invalid_square}
-    end;
+    FromIdx = binbo_board:notation_to_index(FromSquare),
+    ToIdx = binbo_board:notation_to_index(ToSquare),
+    binbo_position:get_capture_info(FromIdx, ToIdx, Game);
 get_capture_info(_FromSquare, _ToSquare, Game) ->
     {error, {bad_game, Game}}.
 
