@@ -270,14 +270,14 @@ do_validate_move([capture|Tail], Game, #move_info{to_idx = To, pcolor = Pcolor} 
     CaptColor = ?COLOR(Captured),
     Mode = binbo_position:get_mode(Game),
     case ?IS_PIECE(Captured) of
+        true when Pcolor =:= CaptColor -> % own piece captured (error)
+            {error, own_piece_capture};
         true when ?PIECE_TYPE(Captured) =:= ?KING ->
             % King capture: error in standard mode, allowed in bughouse mode
             case Mode of
                 standard -> {error, {invalid_move, king_capture}};
                 bughouse -> do_validate_move(Tail, Game, MoveInfo#move_info{captured = Captured, captured_idx = To})
             end;
-        true when Pcolor =:= CaptColor -> % own piece captured (error)
-            {error, own_piece_capture};
         true -> % enemy piece captured (ok)
             do_validate_move(Tail, Game, MoveInfo#move_info{captured = Captured, captured_idx = To});
         false -> % moved on empty square (ok)
