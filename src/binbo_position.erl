@@ -402,12 +402,13 @@ init_empty_reserves() ->
     #{p => 0, n => 0, b => 0, r => 0, q => 0}.
 
 %% piece_type_to_atom/1
--spec piece_type_to_atom(piece_type()) -> p | n | b | r | q.
+-spec piece_type_to_atom(piece_type()) -> p | n | b | r | q | k.
 piece_type_to_atom(?PAWN)   -> p;
 piece_type_to_atom(?KNIGHT) -> n;
 piece_type_to_atom(?BISHOP) -> b;
 piece_type_to_atom(?ROOK)   -> r;
-piece_type_to_atom(?QUEEN)  -> q.
+piece_type_to_atom(?QUEEN)  -> q;
+piece_type_to_atom(?KING)   -> k.
 
 %% get_capture_info/3
 %% Returns information about a potential capture.
