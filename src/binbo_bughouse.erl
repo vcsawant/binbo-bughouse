@@ -24,6 +24,7 @@
 -export([game_draw/1, game_draw/2, set_game_winner/2, set_game_winner/3]).
 -export([print_board/1, print_board/2]).
 -export([all_legal_moves/1, all_legal_moves/2]).
+-export([select_square/2]).
 -export([stop_server/1]).
 -export([new_uci_game/2]).
 -export([uci_command_call/2, uci_command_cast/2]).
@@ -217,6 +218,22 @@ print_board(Pid, Opts) ->
 -spec get_fen(pid()) -> binbo_server:get_fen_ret().
 get_fen(Pid) ->
     binbo_server:get_fen(Pid).
+
+%% select_square/2
+-spec select_square(pid(), binary()) ->
+    {ok, {byte() | empty, list()}} | {error, term()}.
+%% @doc
+%% Returns the piece at the given square and all legal moves from that square.
+%%
+%% Returns {ok, {PieceChar, LegalMoves}} where:
+%%   - PieceChar: FEN character ($P, $p, $N, etc.) or atom 'empty' for empty squares
+%%   - LegalMoves: [{FromSquare, ToSquare}] or [{FromSquare, ToSquare, PromoType}]
+%%
+%% Example:
+%%   {ok, {$P, [{<<"e2">>, <<"e3">>}, {<<"e2">>, <<"e4">>}]}} = select_square(Pid, <<"e2">>)
+%% @end
+select_square(Pid, Square) ->
+    binbo_server:select_square(Pid, Square).
 
 %% all_legal_moves/1
 -spec all_legal_moves(pid()) -> binbo_server:all_legal_moves_ret().

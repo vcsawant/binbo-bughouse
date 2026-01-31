@@ -19,6 +19,7 @@
 -export([status/1, draw/2, set_winner/3]).
 -export([pretty_board/2, get_fen/1]).
 -export([all_legal_moves/2]).
+-export([select_square/2]).
 -export([side_to_move/1]).
 -export([get_pieces_list/2]).
 %% Bughouse-specific exports
@@ -180,6 +181,47 @@ all_legal_moves(Game, MoveType) ->
         true  -> {ok, binbo_movegen:all_valid_moves(Game, MoveType)};
         false -> {error, {bad_game, Game}}
     end.
+
+%% select_square/2
+%% @doc Returns the piece at a square and all legal moves from that square.
+%% Returns {ok, {PieceChar, LegalMoves}} where:
+%%   - PieceChar is FEN character ($P, $p, $N, etc.) or 'empty'
+%%   - LegalMoves is [{FromSquare, ToSquare}] or [{FromSquare, ToSquare, Promo}]
+%% @end
+-spec select_square(binary() | non_neg_integer(), game()) ->
+    {ok, {byte() | empty, list()}} | {error, bad_game_term()}.
+select_square(Square, Game) when is_map(Game) ->
+    % Convert notation to index if needed
+    SquareIdx = case Square of
+        Bin when is_binary(Bin) -> binbo_board:notation_to_index(Bin);
+        Idx when is_integer(Idx) -> Idx
+    end,
+
+    % Get piece at square
+    Piece = binbo_position:get_piece(SquareIdx, Game),
+
+    % Convert piece byte to FEN character
+    PieceChar = case Piece of
+        0 -> empty;  % EMPTY_SQUARE = 0
+        _ -> ?PIECE_TO_CHAR(Piece)
+    end,
+
+    % Get all legal moves in binary format
+    AllMoves = binbo_movegen:all_valid_moves(Game, bin),
+
+    % Filter to moves starting from this square
+    SquareNotation = binbo_board:index_to_notation(SquareIdx),
+    LegalMoves = lists:filter(fun(Move) ->
+        case Move of
+            {From, _To} -> From =:= SquareNotation;
+            {From, _To, _Promo} -> From =:= SquareNotation;
+            _ -> false
+        end
+    end, AllMoves),
+
+    {ok, {PieceChar, LegalMoves}};
+select_square(_Square, Game) ->
+    {error, {bad_game, Game}}.
 
 %% side_to_move/1
 -spec side_to_move(game()) -> side_to_move_ret().
