@@ -20,5 +20,6 @@
     castling = 0 :: binbo_position:castling(),
     enpassant = none :: none | binbo_board:square_index(),
     halfmove = 0 :: non_neg_integer(),
-    fullmove = 1 :: pos_integer()
+    fullmove = 1 :: pos_integer(),
+    promoted_pieces = #{} :: #{binbo_board:square_index() => true}
 }).

@@ -119,6 +119,18 @@
     test_standard_mode_rejects_too_many_pawns/1
 ]).
 
+%% BFEN compliance tests
+-export([
+    test_bfen_single_bracket_reserves/1,
+    test_bfen_empty_reserves_bughouse/1,
+    test_bfen_standard_mode_no_brackets/1,
+    test_bfen_canonical_reserve_ordering/1,
+    test_bfen_promoted_piece_in_fen/1,
+    test_bfen_parse_fen_with_tilde/1,
+    test_bfen_promoted_round_trip/1,
+    test_bfen_backward_compat_two_bracket_parse/1
+]).
+
 %% Integration tests
 -export([
     test_full_game_workflow/1,
@@ -142,6 +154,7 @@ all() ->
         {group, mode_persistence},
         {group, edge_cases},
         {group, backward_compatibility},
+        {group, bfen_compliance},
         {group, integration}
     ].
 
@@ -231,6 +244,17 @@ groups() ->
             test_standard_mode_king_cannot_be_captured,
             test_standard_mode_king_in_check_validation,
             test_standard_mode_rejects_too_many_pawns
+        ]},
+
+        {bfen_compliance, [parallel], [
+            test_bfen_single_bracket_reserves,
+            test_bfen_empty_reserves_bughouse,
+            test_bfen_standard_mode_no_brackets,
+            test_bfen_canonical_reserve_ordering,
+            test_bfen_promoted_piece_in_fen,
+            test_bfen_parse_fen_with_tilde,
+            test_bfen_promoted_round_trip,
+            test_bfen_backward_compat_two_bracket_parse
         ]},
 
         {integration, [parallel], [
@@ -892,14 +916,14 @@ test_generate_fen_with_reserves(Config) ->
 
 test_fen_round_trip_with_reserves(Config) ->
     Pid = get_pid(Config),
-    %% Load FEN with reserves (add pawns to avoid insufficient material)
-    Fen1 = <<"4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3[NP][q] w - - 0 1">>,
-    {ok, continue} = binbo_bughouse:new_game(Pid, Fen1),
+    %% Load FEN with reserves in single-bracket BFEN format (add pawns to avoid insufficient material)
+    Fen1 = <<"4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3[NPq] w - - 0 1">>,
+    {ok, continue} = binbo_bughouse:new_game(Pid, Fen1, #{mode => bughouse}),
 
     %% Export FEN
     {ok, Fen2} = binbo_bughouse:get_fen(Pid),
 
-    %% Should be identical
+    %% Should be byte-identical (single-bracket emit matches single-bracket input)
     Fen1 = Fen2,
 
     ok.
@@ -1220,6 +1244,100 @@ test_standard_mode_rejects_too_many_pawns(Config) ->
     {error, {too_many_pawns, white, 9}} = binbo_bughouse:new_game(Pid,
         <<"7k/4P3/8/8/8/8/PPPPPPPP/4K3 w - - 0 1">>, #{mode => standard}),
 
+    ok.
+
+%%%------------------------------------------------------------------------------
+%%%   BFEN Compliance Tests
+%%%------------------------------------------------------------------------------
+
+test_bfen_single_bracket_reserves(Config) ->
+    Pid = get_pid(Config),
+    {ok, continue} = binbo_bughouse:new_game(Pid, initial, #{mode => bughouse}),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, n),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, p),
+    ok = binbo_bughouse:add_to_reserve(Pid, black, q),
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    %% Must contain [NPq] not [NP][q]
+    true = binary:match(Fen, <<"[NPq]">>) =/= nomatch,
+    nomatch = binary:match(Fen, <<"[NP][q]">>),
+    ok.
+
+test_bfen_empty_reserves_bughouse(Config) ->
+    Pid = get_pid(Config),
+    {ok, continue} = binbo_bughouse:new_game(Pid, initial, #{mode => bughouse}),
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    %% Bughouse mode with empty reserves must emit []
+    <<"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[] w KQkq - 0 1">> = Fen,
+    ok.
+
+test_bfen_standard_mode_no_brackets(Config) ->
+    Pid = get_pid(Config),
+    {ok, continue} = binbo_bughouse:new_game(Pid, initial, #{mode => standard}),
+    %% Manually add a pawn to reserve (normally impossible in standard but tests the emitter)
+    ok = binbo_bughouse:add_to_reserve(Pid, white, p),
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    %% Standard mode must not emit any brackets
+    nomatch = binary:match(Fen, <<"[">>),
+    ok.
+
+test_bfen_canonical_reserve_ordering(Config) ->
+    Pid = get_pid(Config),
+    {ok, continue} = binbo_bughouse:new_game(Pid, initial, #{mode => bughouse}),
+    %% Add white pieces in non-canonical order: P, Q, N
+    ok = binbo_bughouse:add_to_reserve(Pid, white, p),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, q),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, n),
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    %% Output must be [QNP] (canonical: Q R B N P) regardless of insertion order
+    true = binary:match(Fen, <<"[QNP]">>) =/= nomatch,
+    ok.
+
+test_bfen_promoted_piece_in_fen(Config) ->
+    Pid = get_pid(Config),
+    %% White pawn on e7, black rook on g8, black king on h8
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"6rk/4P3/8/8/8/8/8/4K3[] w - - 0 1">>, #{mode => bughouse}),
+    %% Promote e7 pawn to queen
+    {ok, _Status} = binbo_bughouse:move(Pid, <<"e7e8q">>),
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    %% Position must contain Q~ (promoted queen on e8)
+    true = binary:match(Fen, <<"Q~">>) =/= nomatch,
+    ok.
+
+test_bfen_parse_fen_with_tilde(Config) ->
+    Pid = get_pid(Config),
+    %% Load FEN directly containing Q~ on e8; black rook on g8 can capture via clear f8
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"4Q~1rk/8/8/8/8/8/8/4K3[] b - - 0 1">>, #{mode => bughouse}),
+    %% get_capture_info for rook-captures-queen (g8 -> e8) must report was_promoted = true
+    {ok, {q, true}} = binbo_bughouse:get_capture_info(Pid, <<"g8">>, <<"e8">>),
+    %% Also verify FEN round-trips with Q~
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    true = binary:match(Fen, <<"Q~">>) =/= nomatch,
+    ok.
+
+test_bfen_promoted_round_trip(Config) ->
+    Pid = get_pid(Config),
+    %% Start from position where white can promote
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"6rk/4P3/8/8/8/8/8/4K3[] w - - 0 1">>, #{mode => bughouse}),
+    {ok, _} = binbo_bughouse:move(Pid, <<"e7e8q">>),
+    {ok, Fen} = binbo_bughouse:get_fen(Pid),
+    %% Load the emitted FEN into a fresh game
+    {ok, Pid2} = binbo_bughouse:new_server(),
+    {ok, continue} = binbo_bughouse:new_game(Pid2, Fen, #{mode => bughouse}),
+    %% The promoted queen on e8 must be flagged after round-trip — verify via capture_info
+    {ok, {q, true}} = binbo_bughouse:get_capture_info(Pid2, <<"g8">>, <<"e8">>),
+    binbo_bughouse:stop_server(Pid2),
+    ok.
+
+test_bfen_backward_compat_two_bracket_parse(Config) ->
+    Pid = get_pid(Config),
+    %% Old two-bracket format [NP][q] must still parse correctly
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3[NP][q] w - - 0 1">>, #{mode => bughouse}),
+    {ok, #{white := #{n := 1, p := 1}, black := #{q := 1}}} =
+        binbo_bughouse:get_reserves(Pid),
     ok.
 
 %%%------------------------------------------------------------------------------

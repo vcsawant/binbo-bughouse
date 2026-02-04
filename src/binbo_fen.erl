@@ -231,8 +231,8 @@ parse([], ParsedFen) ->
     {ok, ParsedFen};
 parse([{position, FenPosition} | Tail], ParsedFen) -> % 1. Piece placement
     case parse_position(FenPosition) of
-        {ok, Position} ->
-            parse(Tail, ParsedFen#parsed_fen{position = Position});
+        {ok, Position, PromotedPieces} ->
+            parse(Tail, ParsedFen#parsed_fen{position = Position, promoted_pieces = PromotedPieces});
         {error, Reason} ->
             fen_error({position, Reason})
     end;
@@ -270,55 +270,62 @@ parse([_ | Tail], ParsedFen) ->
 
 
 %% parse_position/1
--spec parse_position(binary()) -> {ok, position()} | {error, position_error()}.
+-spec parse_position(binary()) -> {ok, position(), #{sq_idx() => true}} | {error, position_error()}.
 parse_position(<<>>) ->
     {error, empty_position};
 parse_position(FenPosition) ->
     case split_fen_position(FenPosition) of
-        {ok, Tuples} -> parse_position(Tuples, [], ?NO_PIECES_MAP);
+        {ok, Tuples} -> parse_position(Tuples, [], ?NO_PIECES_MAP, #{});
         error -> {error, not_8_ranks}
     end.
 
-%% parse_position/3
--spec parse_position([fen_rank_idx()], position(), pieces_totals()) -> {ok, position()} | {error, Error} when
+%% parse_position/4
+-spec parse_position([fen_rank_idx()], position(), pieces_totals(), #{sq_idx() => true}) -> {ok, position(), #{sq_idx() => true}} | {error, Error} when
     Error :: pieces_totals_error() | empty_rank | rank_error().
-parse_position([], Position, Totals) ->
+parse_position([], Position, Totals, PromotedPieces) ->
     case validate_pieces_totals(Totals) of
-        ok    -> {ok, Position};
+        ok    -> {ok, Position, PromotedPieces};
         Error -> Error
     end;
-parse_position([{<<>>, _} | _], _, _) ->
+parse_position([{<<>>, _} | _], _, _, _) ->
     {error, empty_rank};
-parse_position([{Rank, Idx1} | Tail], Position, Totals) ->
-    case parse_pos_rank(Rank, Idx1, Position, Totals, Idx1) of
-        {ok, Position2, Totals2} -> parse_position(Tail, Position2, Totals2);
+parse_position([{Rank, Idx1} | Tail], Position, Totals, PromotedPieces) ->
+    case parse_pos_rank(Rank, Idx1, Position, Totals, Idx1, PromotedPieces) of
+        {ok, Position2, Totals2, PromotedPieces2} -> parse_position(Tail, Position2, Totals2, PromotedPieces2);
         Error -> Error
     end.
 
-%% parse_pos_rank/5
--spec parse_pos_rank(binary(), sq_idx(), position(), pieces_totals(), cur_idx()) -> {ok, position(), pieces_totals()} | {error, rank_error()}.
-parse_pos_rank(<<>>, Idx1, Position, Totals, CurIdx) ->
+%% parse_pos_rank/6
+-spec parse_pos_rank(binary(), sq_idx(), position(), pieces_totals(), cur_idx(), #{sq_idx() => true}) -> {ok, position(), pieces_totals(), #{sq_idx() => true}} | {error, rank_error()}.
+parse_pos_rank(<<>>, Idx1, Position, Totals, CurIdx, PromotedPieces) ->
     case CurIdx =:= (Idx1 + 8) of
         true  ->
-            {ok, Position, Totals};
+            {ok, Position, Totals, PromotedPieces};
         false ->
             {error, {last_index_mismatch, CurIdx, {rank, binbo_board:rank_number(Idx1)}}}
     end;
-parse_pos_rank(<<_/bits>>, Idx1, _, _, CurIdx) when CurIdx > (Idx1 + 7) ->
+parse_pos_rank(<<_/bits>>, Idx1, _, _, CurIdx, _) when CurIdx > (Idx1 + 7) ->
     {error, {index_out_of_range, CurIdx, {rank, binbo_board:rank_number(Idx1)}}};
-parse_pos_rank(<<Char:8, Rest/bits>>, Idx1, Position, Totals, CurIdx) ->
+parse_pos_rank(<<Char:8, Rest/bits>>, Idx1, Position, Totals, CurIdx, PromotedPieces) ->
     case maps:find(Char, Totals) of
         {ok, Num} -> % piece
             Piece = ?CHAR_TO_PIECE(Char),
             Position2 = [{CurIdx, Piece}|Position],
             Totals2 = maps:update(Char, Num + 1, Totals),
-            parse_pos_rank(Rest, Idx1, Position2, Totals2, CurIdx + 1);
+            %% Check for ~ suffix (promoted piece marker in BFEN)
+            case Rest of
+                <<$~, Rest2/bits>> ->
+                    PromotedPieces2 = maps:put(CurIdx, true, PromotedPieces),
+                    parse_pos_rank(Rest2, Idx1, Position2, Totals2, CurIdx + 1, PromotedPieces2);
+                _ ->
+                    parse_pos_rank(Rest, Idx1, Position2, Totals2, CurIdx + 1, PromotedPieces)
+            end;
         error -> % not piece
             case (Char >= $1 andalso Char =< $8) of
                 true  ->
                     % $0 =:= 48.
                     CurIdx2 = CurIdx + (Char - $0),
-                    parse_pos_rank(Rest, Idx1, Position, Totals, CurIdx2);
+                    parse_pos_rank(Rest, Idx1, Position, Totals, CurIdx2, PromotedPieces);
                 false ->
                     {error, {invalid_character, [Char]}}
             end

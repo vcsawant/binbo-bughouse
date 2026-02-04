@@ -978,7 +978,7 @@ get_pieces_list(BB, Game, SquareType, List) ->
 %% load_parsed_fen/2
 -spec load_parsed_fen(parsed_fen(), bb_game()) -> bb_game().
 load_parsed_fen(ParsedFen, Game) ->
-    Steps = [position, reserves, sidetomove, castling, enpassant, halfmove, fullmove, hashmap],
+    Steps = [position, reserves, sidetomove, castling, enpassant, halfmove, fullmove, promoted_pieces, hashmap],
     load_parsed_fen(Steps, ParsedFen, Game).
 
 %% load_parsed_fen/3
@@ -1025,6 +1025,9 @@ load_parsed_fen([halfmove|Tail], #parsed_fen{halfmove = Halfmove} = ParsedFen, G
     load_parsed_fen(Tail, ParsedFen, Game2);
 load_parsed_fen([fullmove|Tail], #parsed_fen{fullmove = Fullmove} = ParsedFen, Game) -> % fullmove
     Game2 = set_fullmove(Fullmove, Game),
+    load_parsed_fen(Tail, ParsedFen, Game2);
+load_parsed_fen([promoted_pieces|Tail], #parsed_fen{promoted_pieces = PromotedPieces} = ParsedFen, Game) -> % promoted pieces (BFEN)
+    Game2 = Game#{?GAME_KEY_PROMOTED_PIECES := PromotedPieces},
     load_parsed_fen(Tail, ParsedFen, Game2);
 load_parsed_fen([hashmap|Tail], ParsedFen, Game) -> % hashmap
     Game2 = update_hashmap(Game),
@@ -1477,14 +1480,20 @@ get_fen(Game) ->
 get_fen_ranks(_Game, [], Ranks) ->
     uef_bin:binary_join(Ranks, <<$/>>);
 get_fen_ranks(Game, [{A,H} | Tail], Ranks) ->
+    Mode = get_mode(Game),
+    #{?GAME_KEY_PROMOTED_PIECES := PromotedPieces} = Game,
     {BinRank, RestCnt} = lists:foldl(fun(SqIdx, {Acc, Cnt}) ->
         Piece = get_piece(SqIdx, Game),
         case ?IS_PIECE(Piece) of
             true  ->
                 Char = ?PIECE_TO_CHAR(Piece),
+                PieceBytes = case {Mode, maps:is_key(SqIdx, PromotedPieces)} of
+                    {bughouse, true} -> <<Char, $~>>;
+                    _                -> <<Char>>
+                end,
                 case Cnt of
-                    0 -> {<<Acc/bits, Char>>, 0};
-                    _ -> {<<Acc/bits, ($0 + Cnt), Char>>, 0}
+                    0 -> {<<Acc/bits, PieceBytes/binary>>, 0};
+                    _ -> {<<Acc/bits, ($0 + Cnt), PieceBytes/binary>>, 0}
                 end;
             false ->
                 {Acc, Cnt + 1}
@@ -1515,15 +1524,16 @@ get_fen_castling(Flag) ->
 %% Returns <<>> if no pieces in reserves, otherwise <<"[NP][bp]">> format
 -spec get_fen_reserves(bb_game()) -> binary().
 get_fen_reserves(Game) ->
-    WhiteReserve = get_reserve(?WHITE, Game),
-    BlackReserve = get_reserve(?BLACK, Game),
-    WhiteStr = reserve_to_string(WhiteReserve, upper),
-    BlackStr = reserve_to_string(BlackReserve, lower),
-    case {WhiteStr, BlackStr} of
-        {<<>>, <<>>} -> <<>>;
-        {W, <<>>} -> <<"[", W/binary, "]">>;
-        {<<>>, B} -> <<"[", B/binary, "]">>;
-        {W, B} -> <<"[", W/binary, "][", B/binary, "]">>
+    Mode = get_mode(Game),
+    case Mode of
+        standard ->
+            <<>>;
+        bughouse ->
+            WhiteReserve = get_reserve(?WHITE, Game),
+            BlackReserve = get_reserve(?BLACK, Game),
+            WhiteStr = reserve_to_string(WhiteReserve, upper),
+            BlackStr = reserve_to_string(BlackReserve, lower),
+            <<"[", WhiteStr/binary, BlackStr/binary, "]">>
     end.
 
 %% reserve_to_string/2
