@@ -10,7 +10,7 @@ Binbo-Bughouse extends the excellent [binbo](https://github.com/DOBRO/binbo) che
 
 - ✅ **Piece drops**: Place captured pieces using `P@e4` notation (UCI standard)
 - ✅ **Extended FEN**: Support for piece reserves `[NP]` format
-- ✅ **King capture detection**: Game ends when king is captured with explicit status
+- ✅ **Checkmate detection**: Standard chess legality enforced in bughouse mode
 - ✅ **Configurable modes**: Switch between standard chess and Bughouse rules
 - ✅ **Reserve management**: Track and manipulate piece reserves per board
 - ✅ **Legal drop generation**: Calculate all valid piece placements
@@ -103,9 +103,9 @@ case :binbo_bughouse.move(pid_a, "dxe5") do
     # (Elixir layer handles promoted piece demotion)
     :binbo_bughouse.add_to_reserve(pid_b, :white, :p)
 
-  {:ok, {:king_captured, :white_wins}} ->
-    # Game over! White won on board A
-    IO.puts("White wins by king capture!")
+  {:ok, {:checkmate, :white_wins}} ->
+    # Game over! White won by checkmate on board A
+    IO.puts("White wins by checkmate!")
 end
 
 # Drop a piece on board B
@@ -138,10 +138,11 @@ Binbo-Bughouse supports both standard chess and Bughouse modes:
 
 | Feature | Standard Mode | Bughouse Mode |
 |---------|--------------|---------------|
-| King in check validation | Required - move rejected if own king in check | Allowed - games end on king capture |
-| King capture | Illegal move | Legal - returns `{king_captured, Winner}` |
+| King in check validation | Required - move rejected if own king in check | Required - same as standard |
+| King capture | Illegal move | Illegal move |
 | Piece reserves | Tracked but not used | Active - pieces can be dropped |
-| Game termination | Checkmate/Stalemate | King capture or checkmate |
+| Piece drops block check | N/A | Drops can block check to prevent checkmate |
+| Game termination | Checkmate/Stalemate | Checkmate/Stalemate |
 
 ### Reserve Management
 
@@ -257,7 +258,6 @@ true = binbo_bughouse:can_drop(Pid, p, <<"e4">>).
 % Possible status returns:
 continue                                    % Game in progress
 {checkmate, white_wins | black_wins}       % Checkmate (standard or bughouse mode)
-{king_captured, white_wins | black_wins}   % King captured (bughouse mode only)
 {draw, Reason}                             % Draw (stalemate, rule50, etc.)
 ```
 
@@ -270,7 +270,7 @@ Binbo-Bughouse manages **one board** at a time. The Elixir layer orchestrates:
 **What binbo_bughouse DOES handle:**
 - ✅ Single board chess rules
 - ✅ Piece drop validation (square empty, not pawn on back rank)
-- ✅ Move validation with king capture detection
+- ✅ Move validation with checkmate detection
 - ✅ Attack square calculation
 - ✅ Extended FEN parsing with reserves `[NP]`
 - ✅ Piece placement from reserves
@@ -300,13 +300,13 @@ defmodule BughouseGame do
   end
 
   def check_game_over(game) do
-    # Check both boards for king capture
+    # Check both boards for checkmate
     status_a = :binbo_bughouse.game_status(game.board_a)
     status_b = :binbo_bughouse.game_status(game.board_b)
 
     case {status_a, status_b} do
-      {{:ok, {:king_captured, winner}}, _} -> {:game_over, winner}
-      {_, {:ok, {:king_captured, winner}}} -> {:game_over, winner}
+      {{:ok, {:checkmate, winner}}, _} -> {:game_over, winner}
+      {_, {:ok, {:checkmate, winner}}} -> {:game_over, winner}
       _ -> :continue
     end
   end
@@ -326,8 +326,8 @@ All core Bughouse features are implemented and tested.
 - [x] Extended FEN parser for piece reserves `[NP]`
 - [x] Piece drop move parsing and validation (`P@e4`)
 - [x] Configurable game modes (standard vs bughouse)
-- [x] Modified move validation for king capture rules
-- [x] King capture detection and status reporting
+- [x] Standard chess legality enforced (check validation, pins, checkmate)
+- [x] Checkmate detection with drop-aware move generation
 - [x] Reserve management API
 - [x] Legal drop generation
 - [x] Full backward compatibility
@@ -396,8 +396,8 @@ Contributions welcome! This fork focuses specifically on Bughouse chess support.
 ### Modified Modules
 
 **Core Logic (9 files modified):**
-- `src/binbo_position.erl` - Reserve management, mode-aware validation, king capture detection
-- `include/binbo_position.hrl` - New constants (GAME_KEY_WHITE_RESERVE, GAME_KEY_BLACK_RESERVE, GAME_KEY_MODE, GAME_STATUS_KING_CAPTURED)
+- `src/binbo_position.erl` - Reserve management, mode-aware validation, checkmate detection
+- `include/binbo_position.hrl` - New constants (GAME_KEY_WHITE_RESERVE, GAME_KEY_BLACK_RESERVE, GAME_KEY_MODE)
 - `src/binbo_fen.erl` - Extended FEN parsing for `[NP]` reserve notation
 - `include/binbo_fen.hrl` - Updated parsed_fen record with white_reserve and black_reserve
 - `src/binbo_move.erl` - Drop move parsing and validation (`P@e4` notation)
@@ -442,7 +442,7 @@ Complete: rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR[NNP][bp] w KQkq - 0 1
 2. **Single Board Focus**: Each binbo_bughouse process manages one board
 3. **Elixir Coordination**: Promoted piece tracking handled by Elixir layer
 4. **Mode Configuration**: Explicit mode parameter for clarity and flexibility
-5. **King Capture Status**: New status type `{king_captured, Winner}` for explicit detection
+5. **Checkmate Detection**: Drop-aware checkmate detection ensures drops that block check prevent false checkmates
 
 ## Performance
 
