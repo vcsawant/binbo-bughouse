@@ -108,7 +108,8 @@
     test_drop_creates_check/1,
     test_drop_creates_checkmate/1,
     test_drop_blocks_check/1,
-    test_drop_while_in_check_non_blocking/1
+    test_drop_while_in_check_non_blocking/1,
+    test_empty_reserves_not_checkmate_bughouse/1
 ]).
 
 %% Backward compatibility tests
@@ -238,7 +239,8 @@ groups() ->
             test_drop_creates_check,
             test_drop_creates_checkmate,
             test_drop_blocks_check,
-            test_drop_while_in_check_non_blocking
+            test_drop_while_in_check_non_blocking,
+            test_empty_reserves_not_checkmate_bughouse
         ]},
 
         {backward_compatibility, [parallel], [
@@ -711,12 +713,13 @@ test_can_drop_no_piece_in_reserve(Config) ->
 
 test_checkmate_ends_game(Config) ->
     Pid = get_pid(Config),
-    %% Back-rank mate: white rook mates on 8th rank
+    %% Smothered mate: black king h8, rook g8, pawns f7/g7/h7
+    %% Knight check can't be blocked by drops
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"6rk/5ppp/8/4N3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Deliver checkmate
-    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
+    %% Deliver checkmate (Nf7#)
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"e5f7">>),
 
     %% Verify game status
     {ok, {checkmate, white_wins}} = binbo_bughouse:game_status(Pid),
@@ -749,13 +752,13 @@ test_checkmate_white_wins(Config) ->
 
 test_checkmate_black_wins(Config) ->
     Pid = get_pid(Config),
-    %% Back-rank mate by black: black king on e8, rook on a8
-    %% White king on g1 with pawns f2/g2/h2 blocking escape
+    %% Smothered mate by black: white king h1, rook g1, pawns g2/h2
+    %% Black knight on e4 goes to f2 — knight check can't be blocked by drops
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"r3k3/8/8/8/8/8/5PPP/6K1 b - - 0 1">>, #{mode => bughouse}),
+        <<"4k3/8/8/8/4n3/8/6PP/6RK b - - 0 1">>, #{mode => bughouse}),
 
-    %% Black rook delivers mate
-    {ok, {checkmate, black_wins}} = binbo_bughouse:move(Pid, <<"a8a1">>),
+    %% Black knight delivers mate (Nf2#)
+    {ok, {checkmate, black_wins}} = binbo_bughouse:move(Pid, <<"e4f2">>),
 
     ok.
 
@@ -1039,15 +1042,15 @@ test_mode_in_game_state(Config) ->
 
 test_drop_after_game_over(Config) ->
     Pid = get_pid(Config),
-    %% Set up checkmate scenario: back-rank mate
+    %% Smothered mate: knight check can't be blocked by drops
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"6rk/5ppp/8/4N3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
     %% Add pawn to reserve
     ok = binbo_bughouse:add_to_reserve(Pid, white, p),
 
-    %% Deliver checkmate
-    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
+    %% Deliver checkmate (Nf7#)
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"e5f7">>),
 
     %% Attempt to drop after game over
     {error, {{game_over, {checkmate, white_wins}}, <<"P@e4">>}} =
@@ -1057,12 +1060,12 @@ test_drop_after_game_over(Config) ->
 
 test_drop_after_checkmate(Config) ->
     Pid = get_pid(Config),
-    %% Set up checkmate scenario
+    %% Smothered mate: knight check can't be blocked by drops
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"6rk/5ppp/8/4N3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Deliver checkmate
-    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
+    %% Deliver checkmate (Nf7#)
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"e5f7">>),
 
     %% Add pawn and try to drop
     ok = binbo_bughouse:add_to_reserve(Pid, white, p),
@@ -1157,15 +1160,15 @@ test_drop_creates_check(Config) ->
 
 test_drop_creates_checkmate(Config) ->
     Pid = get_pid(Config),
-    %% Ka8, white Qb6. Drop R@a1: Ra1 checks along a-file.
-    %% King on a8, Qb6 covers a7, b7, b8. Checkmate!
+    %% Black king a8 trapped by own rook b8 and pawns a7/b7.
+    %% Drop N@c7: knight check can't be blocked, king has no escape.
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"k7/8/1Q6/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"kr6/pp6/8/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
-    ok = binbo_bughouse:add_to_reserve(Pid, white, r),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, n),
 
-    %% Drop rook on a1 for checkmate
-    {ok, {checkmate, white_wins}} = binbo_bughouse:drop_move_uci(Pid, <<"R@a1">>),
+    %% Drop knight on c7 for unblockable checkmate
+    {ok, {checkmate, white_wins}} = binbo_bughouse:drop_move_uci(Pid, <<"N@c7">>),
 
     ok.
 
@@ -1195,6 +1198,23 @@ test_drop_while_in_check_non_blocking(Config) ->
     %% Drop pawn on a3 — does not block check, should be rejected
     {error, {{invalid_move, own_king_in_check}, <<"P@a3">>}} =
         binbo_bughouse:drop_move_uci(Pid, <<"P@a3">>),
+
+    ok.
+
+test_empty_reserves_not_checkmate_bughouse(Config) ->
+    Pid = get_pid(Config),
+    %% Back-rank "mate": rook on a1 delivers check on a8.
+    %% Black king g8, pawns f7/g7/h7. Empty squares b8-f8 could block.
+    %% In bughouse, teammate can send pieces, so this is NOT checkmate.
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
+
+    %% No reserves added! Ra1-a8 would be mate in standard chess,
+    %% but in bughouse the game continues (teammate can send a blocking piece).
+    {ok, continue} = binbo_bughouse:move(Pid, <<"a1a8">>),
+
+    %% Verify game status is still continue, not checkmate
+    {ok, continue} = binbo_bughouse:game_status(Pid),
 
     ok.
 

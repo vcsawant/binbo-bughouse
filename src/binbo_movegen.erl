@@ -170,24 +170,37 @@ can_drop(PieceType, ToIdx, Game) when is_integer(ToIdx) ->
 
 
 %% has_any_valid_drop/3
-%% Checks if any drop move is legal for the given color.
-%% IsCheck indicates whether the player is currently in check.
-%% If not in check and reserves are non-empty, any drop on an empty square is valid.
-%% If in check, we must verify that a drop can block the check.
+%% Checks if any drop move could be legal for the given color.
+%% In bughouse mode, reserves are ignored because a teammate can send
+%% pieces at any time — checkmate is only declared when no possible
+%% drop on any square could resolve the position.
+%% In other modes (e.g. crazyhouse), actual reserve pieces are required.
 -spec has_any_valid_drop(color(), boolean(), bb_game()) -> boolean().
 has_any_valid_drop(Color, IsCheck, Game) ->
-    Reserve = binbo_position:get_reserve(Color, Game),
-    HasAnyReserve = lists:any(fun({_Key, Count}) -> Count > 0 end, maps:to_list(Reserve)),
-    case HasAnyReserve of
-        false -> false;
-        true ->
+    Mode = binbo_position:get_mode(Game),
+    case Mode of
+        bughouse ->
+            %% Bughouse: teammate can send pieces, so don't check reserves.
+            %% Only declare checkmate when no drop could possibly block.
             case IsCheck of
                 false ->
-                    % Not in check: any drop on an empty square is valid
                     true;
                 true ->
-                    % In check: must find a drop that blocks the check
-                    try_blocking_drops(Color, Reserve, Game)
+                    AllPieceTypes = [?PAWN, ?KNIGHT, ?BISHOP, ?ROOK, ?QUEEN],
+                    try_blocking_with_types(AllPieceTypes, Color, Game)
+            end;
+        _ ->
+            %% Other modes: need actual reserve pieces to drop
+            Reserve = binbo_position:get_reserve(Color, Game),
+            HasAnyReserve = lists:any(fun({_Key, Count}) -> Count > 0 end, maps:to_list(Reserve)),
+            case HasAnyReserve of
+                false -> false;
+                true ->
+                    case IsCheck of
+                        false -> true;
+                        true ->
+                            try_blocking_drops(Color, Reserve, Game)
+                    end
             end
     end.
 
@@ -361,16 +374,21 @@ squares_to_drops(BB, PieceChar, Acc) ->
 %%%   Blocking Drop Helpers (Bughouse checkmate detection)
 %%%------------------------------------------------------------------------------
 
-%% try_blocking_drops/3
-%% When in check, try each available piece type on each empty square
-%% to find a drop that resolves the check.
--spec try_blocking_drops(color(), map(), bb_game()) -> boolean().
-try_blocking_drops(Color, Reserve, Game) ->
+%% try_blocking_with_types/3
+%% Bughouse: try all piece types on empty squares regardless of reserves.
+-spec try_blocking_with_types([piece_type()], color(), bb_game()) -> boolean().
+try_blocking_with_types(PieceTypes, Color, Game) ->
     OccupiedBB = maps:get(bball, Game),
     EmptySquaresBB = (bnot OccupiedBB) band ?ALL_SQUARES_BB,
+    try_drop_piece_types(PieceTypes, Color, EmptySquaresBB, Game).
+
+%% try_blocking_drops/3
+%% Non-bughouse: try only piece types that exist in reserves.
+-spec try_blocking_drops(color(), map(), bb_game()) -> boolean().
+try_blocking_drops(Color, Reserve, Game) ->
     PieceTypes = [{p, ?PAWN}, {n, ?KNIGHT}, {b, ?BISHOP}, {r, ?ROOK}, {q, ?QUEEN}],
     AvailableTypes = [PT || {Key, PT} <- PieceTypes, maps:get(Key, Reserve, 0) > 0],
-    try_drop_piece_types(AvailableTypes, Color, EmptySquaresBB, Game).
+    try_blocking_with_types(AvailableTypes, Color, Game).
 
 %% try_drop_piece_types/4
 -spec try_drop_piece_types([piece_type()], color(), bb(), bb_game()) -> boolean().

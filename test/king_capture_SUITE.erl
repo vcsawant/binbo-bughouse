@@ -69,35 +69,33 @@ king_capture_illegal_bughouse_test(Config) ->
         binbo_bughouse:move(Pid, <<"e5e8">>),
     ok.
 
-%% @doc Verify checkmate detection: white delivers back-rank mate
+%% @doc Verify checkmate detection: white delivers smothered mate
 checkmate_white_wins_bughouse_test(Config) ->
     Pid = ?config(pid, Config),
-    %% Back-rank mate position: white rook delivers mate on 8th rank
-    %% Black king on g8, pawns on f7,g7,h7 block escape
-    %% White rook on a1 can go to a8 for mate
+    %% Smothered mate: black king h8, rook g8, pawns f7/g7/h7
+    %% White knight on e5 goes to f7 — knight check can't be blocked by drops
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>,
+        <<"6rk/5ppp/8/4N3/8/8/8/4K3 w - - 0 1">>,
         #{mode => bughouse}),
 
-    %% Deliver checkmate
-    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
+    %% Deliver checkmate (Nf7#)
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"e5f7">>),
 
     %% Verify game status
     {ok, {checkmate, white_wins}} = binbo_bughouse:game_status(Pid),
     ok.
 
-%% @doc Verify checkmate detection: black delivers mate
+%% @doc Verify checkmate detection: black delivers smothered mate
 checkmate_black_wins_bughouse_test(Config) ->
     Pid = ?config(pid, Config),
-    %% Black rook delivers back-rank mate
-    %% White king on g1, pawns on f2,g2,h2 block escape
-    %% Black king on e8, black rook on a8 → Ra1#
+    %% Smothered mate: white king h1, rook g1, pawns g2/h2
+    %% Black knight on e4 goes to f2 — knight check can't be blocked by drops
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"r3k3/8/8/8/8/8/5PPP/6K1 b - - 0 1">>,
+        <<"4k3/8/8/8/4n3/8/6PP/6RK b - - 0 1">>,
         #{mode => bughouse}),
 
-    %% Deliver checkmate (rook covers entire 1st rank)
-    {ok, {checkmate, black_wins}} = binbo_bughouse:move(Pid, <<"a8a1">>),
+    %% Deliver checkmate (Nf2#)
+    {ok, {checkmate, black_wins}} = binbo_bughouse:move(Pid, <<"e4f2">>),
 
     %% Verify game status
     {ok, {checkmate, black_wins}} = binbo_bughouse:game_status(Pid),
