@@ -311,11 +311,6 @@ can_drop(_PieceType, _Square, _Game) ->
 %%%   Internal functions
 %%%------------------------------------------------------------------------------
 
-%% init_game/1
--spec init_game(parsed_fen()) -> {ok, {bb_game(), game_status()}} | {error, bb_game_error()}.
-init_game(ParsedFen) ->
-    init_game(ParsedFen, #{}).
-
 %% init_game/2
 -spec init_game(parsed_fen(), #{mode => standard | bughouse}) -> {ok, {bb_game(), game_status()}} | {error, bb_game_error()}.
 init_game(ParsedFen, Opts) ->
@@ -336,8 +331,19 @@ init_game(ParsedFen, Opts) ->
 -spec finalize_fen(bb_game()) -> {bb_game(), game_status()}.
 finalize_fen(Game0) ->
     SideToMove = binbo_position:get_sidetomove(Game0),
-    HasValidMoves = binbo_movegen:has_valid_moves(SideToMove, Game0),
+    HasValidMoves0 = binbo_movegen:has_valid_moves(SideToMove, Game0),
     IsCheck = binbo_position:is_in_check(SideToMove, Game0),
+    %% In bughouse mode, also consider drops for initial status
+    HasValidMoves = case HasValidMoves0 of
+        true -> true;
+        false ->
+            case binbo_position:get_mode(Game0) of
+                bughouse ->
+                    binbo_movegen:has_any_valid_drop(SideToMove, IsCheck, Game0);
+                standard ->
+                    false
+            end
+    end,
     Game = binbo_position:with_status(Game0, HasValidMoves, IsCheck),
     Status = binbo_position:get_status(Game),
     {Game, Status}.
@@ -345,27 +351,28 @@ finalize_fen(Game0) ->
 %% finalize_move/2
 -spec finalize_move(move_info(), bb_game()) -> {bb_game(), game_status()}.
 finalize_move(MoveInfo, Game0) ->
-    % Check if king was captured - if so, skip check calculation
-    #move_info{captured = Captured} = MoveInfo,
-    case ?IS_PIECE(Captured) andalso (?PIECE_TYPE(Captured) =:= ?KING) of
-        true ->
-            % King captured - skip check calculation (no king to check)
-            Game = binbo_position:finalize_move(MoveInfo, Game0),
-            Status = binbo_position:get_status(Game),
-            {Game, Status};
+    EnemyColor = binbo_move:enemy_color(MoveInfo),
+    HasValidMoves0 = binbo_movegen:has_valid_moves(EnemyColor, Game0),
+    IsCheck = binbo_position:is_in_check(EnemyColor, Game0),
+    %% In bughouse mode, also consider drops when determining if opponent has valid moves.
+    %% A player in check might be able to drop a piece to block the check.
+    HasValidMoves = case HasValidMoves0 of
+        true -> true;
         false ->
-            % Normal move - calculate check and valid moves
-            EnemyColor = binbo_move:enemy_color(MoveInfo),
-            HasValidMoves = binbo_movegen:has_valid_moves(EnemyColor, Game0),
-            IsCheck = binbo_position:is_in_check(EnemyColor, Game0),
-            MoveInfo2 = MoveInfo#move_info{
-                is_check = IsCheck,
-                has_valid_moves = HasValidMoves
-            },
-            Game = binbo_position:finalize_move(MoveInfo2, Game0),
-            Status = binbo_position:get_status(Game),
-            {Game, Status}
-    end.
+            case binbo_position:get_mode(Game0) of
+                bughouse ->
+                    binbo_movegen:has_any_valid_drop(EnemyColor, IsCheck, Game0);
+                standard ->
+                    false
+            end
+    end,
+    MoveInfo2 = MoveInfo#move_info{
+        is_check = IsCheck,
+        has_valid_moves = HasValidMoves
+    },
+    Game = binbo_position:finalize_move(MoveInfo2, Game0),
+    Status = binbo_position:get_status(Game),
+    {Game, Status}.
 
 
 %% load_san_moves

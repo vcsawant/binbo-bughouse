@@ -58,20 +58,20 @@
     test_can_drop_no_piece_in_reserve/1
 ]).
 
-%% King capture tests
+%% Checkmate tests
 -export([
-    test_king_capture_ends_game/1,
-    test_king_capture_returns_winner/1,
-    test_king_capture_white_wins/1,
-    test_king_capture_black_wins/1,
-    test_cannot_capture_king_in_standard_mode/1
+    test_checkmate_ends_game/1,
+    test_checkmate_returns_winner/1,
+    test_checkmate_white_wins/1,
+    test_checkmate_black_wins/1,
+    test_king_capture_illegal_in_bughouse_mode/1
 ]).
 
 %% Bughouse mode validation tests
 -export([
-    test_king_in_check_allowed_bughouse_mode/1,
+    test_king_in_check_blocked_bughouse_mode/1,
     test_king_in_check_blocked_standard_mode/1,
-    test_move_into_check_bughouse_mode/1,
+    test_move_into_check_blocked_bughouse_mode/1,
     test_move_into_check_standard_mode/1
 ]).
 
@@ -100,13 +100,15 @@
 %% Edge cases tests
 -export([
     test_drop_after_game_over/1,
-    test_drop_after_king_captured/1,
+    test_drop_after_checkmate/1,
     test_castling_in_bughouse_mode/1,
     test_en_passant_in_bughouse_mode/1,
     test_promotion_in_bughouse_mode/1,
     test_multiple_drops_in_sequence/1,
     test_drop_creates_check/1,
-    test_drop_creates_checkmate/1
+    test_drop_creates_checkmate/1,
+    test_drop_blocks_check/1,
+    test_drop_while_in_check_non_blocking/1
 ]).
 
 %% Backward compatibility tests
@@ -148,7 +150,7 @@ all() ->
         {group, reserve_management},
         {group, piece_drops},
         {group, legal_drops},
-        {group, king_capture},
+        {group, checkmate},
         {group, bughouse_mode_validation},
         {group, fen_with_reserves},
         {group, mode_persistence},
@@ -191,18 +193,18 @@ groups() ->
             test_can_drop_no_piece_in_reserve
         ]},
 
-        {king_capture, [parallel], [
-            test_king_capture_ends_game,
-            test_king_capture_returns_winner,
-            test_king_capture_white_wins,
-            test_king_capture_black_wins,
-            test_cannot_capture_king_in_standard_mode
+        {checkmate, [parallel], [
+            test_checkmate_ends_game,
+            test_checkmate_returns_winner,
+            test_checkmate_white_wins,
+            test_checkmate_black_wins,
+            test_king_capture_illegal_in_bughouse_mode
         ]},
 
         {bughouse_mode_validation, [parallel], [
-            test_king_in_check_allowed_bughouse_mode,
+            test_king_in_check_blocked_bughouse_mode,
             test_king_in_check_blocked_standard_mode,
-            test_move_into_check_bughouse_mode,
+            test_move_into_check_blocked_bughouse_mode,
             test_move_into_check_standard_mode
         ]},
 
@@ -228,13 +230,15 @@ groups() ->
 
         {edge_cases, [parallel], [
             test_drop_after_game_over,
-            test_drop_after_king_captured,
+            test_drop_after_checkmate,
             test_castling_in_bughouse_mode,
             test_en_passant_in_bughouse_mode,
             test_promotion_in_bughouse_mode,
             test_multiple_drops_in_sequence,
             test_drop_creates_check,
-            test_drop_creates_checkmate
+            test_drop_creates_checkmate,
+            test_drop_blocks_check,
+            test_drop_while_in_check_non_blocking
         ]},
 
         {backward_compatibility, [parallel], [
@@ -702,60 +706,66 @@ test_can_drop_no_piece_in_reserve(Config) ->
     ok.
 
 %%%------------------------------------------------------------------------------
-%%%   King Capture Tests
+%%%   Checkmate Tests
 %%%------------------------------------------------------------------------------
 
-test_king_capture_ends_game(Config) ->
+test_checkmate_ends_game(Config) ->
     Pid = get_pid(Config),
-    %% Position where white can capture black king
+    %% Back-rank mate: white rook mates on 8th rank
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Capture king
-    {ok, {king_captured, white_wins}} = binbo_bughouse:move(Pid, <<"e5e8">>),
+    %% Deliver checkmate
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
 
     %% Verify game status
-    {ok, {king_captured, white_wins}} = binbo_bughouse:game_status(Pid),
+    {ok, {checkmate, white_wins}} = binbo_bughouse:game_status(Pid),
 
     ok.
 
-test_king_capture_returns_winner(Config) ->
+test_checkmate_returns_winner(Config) ->
     Pid = get_pid(Config),
+    %% Scholar's mate position
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"rnbqkbnr/3ppppp/ppp5/8/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 0 1">>,
+        #{mode => bughouse}),
+
+    %% Deliver checkmate (Qxf7#)
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"f3f7">>),
+
+    ok.
+
+test_checkmate_white_wins(Config) ->
+    Pid = get_pid(Config),
+    %% Smothered mate: knight delivers mate on f7
+    %% Black king h8, rook g8, pawns g7 h7; white knight on e5 goes to f7
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"6rk/5ppp/8/4N3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+
+    %% Knight to f7 is checkmate (king trapped by own pieces)
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"e5f7">>),
+
+    ok.
+
+test_checkmate_black_wins(Config) ->
+    Pid = get_pid(Config),
+    %% Back-rank mate by black: black king on e8, rook on a8
+    %% White king on g1 with pawns f2/g2/h2 blocking escape
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"r3k3/8/8/8/8/8/5PPP/6K1 b - - 0 1">>, #{mode => bughouse}),
+
+    %% Black rook delivers mate
+    {ok, {checkmate, black_wins}} = binbo_bughouse:move(Pid, <<"a8a1">>),
+
+    ok.
+
+test_king_capture_illegal_in_bughouse_mode(Config) ->
+    Pid = get_pid(Config),
+    %% Position where queen can see king but capture is illegal
     {ok, continue} = binbo_bughouse:new_game(Pid,
         <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Capture king and verify winner
-    {ok, {king_captured, white_wins}} = binbo_bughouse:move(Pid, <<"e5e8">>),
-
-    ok.
-
-test_king_capture_white_wins(Config) ->
-    Pid = get_pid(Config),
-    {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
-
-    %% White captures black king
-    {ok, {king_captured, white_wins}} = binbo_bughouse:move(Pid, <<"e5e8">>),
-
-    ok.
-
-test_king_capture_black_wins(Config) ->
-    Pid = get_pid(Config),
-    {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/8/8/4q3/8/4K3 b - - 0 1">>, #{mode => bughouse}),
-
-    %% Black captures white king
-    {ok, {king_captured, black_wins}} = binbo_bughouse:move(Pid, <<"e3e1">>),
-
-    ok.
-
-test_cannot_capture_king_in_standard_mode(Config) ->
-    Pid = get_pid(Config),
-    %% Standard mode (default)
-    {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => standard}),
-
-    %% Attempt to capture king should be invalid in standard mode
+    %% King capture should fail in bughouse mode too
     {error, {{invalid_move, king_capture}, <<"e5e8">>}} =
         binbo_bughouse:move(Pid, <<"e5e8">>),
 
@@ -765,19 +775,15 @@ test_cannot_capture_king_in_standard_mode(Config) ->
 %%%   Bughouse Mode Validation Tests
 %%%------------------------------------------------------------------------------
 
-test_king_in_check_allowed_bughouse_mode(Config) ->
+test_king_in_check_blocked_bughouse_mode(Config) ->
     Pid = get_pid(Config),
-    %% White king in check from black rook
+    %% White king in check from black rook on e8
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/8/8/8/8/4K2r w - - 0 1">>, #{mode => bughouse}),
+        <<"4r2k/8/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Can make a move that doesn't block check (e.g., king moves but still in check from another piece)
-    %% Actually, let's use a simpler test: move a piece while king is in check
-    {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/8/8/8/1r6/R3K3 w - - 0 1">>, #{mode => bughouse}),
-
-    %% King is in check from rook on b2, but we can move the rook on a1 (leaving king in check)
-    {ok, continue} = binbo_bughouse:move(Pid, <<"a1a2">>),
+    %% Cannot move rook while king is in check (enforced in bughouse too now)
+    {error, {{invalid_move, own_king_in_check}, <<"a1a2">>}} =
+        binbo_bughouse:move(Pid, <<"a1a2">>),
 
     ok.
 
@@ -793,13 +799,15 @@ test_king_in_check_blocked_standard_mode(Config) ->
 
     ok.
 
-test_move_into_check_bughouse_mode(Config) ->
+test_move_into_check_blocked_bughouse_mode(Config) ->
     Pid = get_pid(Config),
+    %% Black rook on d8 would attack d1
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/8/8/8/1r6/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"3rk3/8/8/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Can move king into check in bughouse mode
-    {ok, continue} = binbo_bughouse:move(Pid, <<"e1d1">>),
+    %% Cannot move king into check (enforced in bughouse too now)
+    {error, {{invalid_move, own_king_in_check}, <<"e1d1">>}} =
+        binbo_bughouse:move(Pid, <<"e1d1">>),
 
     ok.
 
@@ -930,8 +938,9 @@ test_fen_round_trip_with_reserves(Config) ->
 
 test_fen_round_trip_preserves_mode(Config) ->
     Pid = get_pid(Config),
-    %% Start bughouse mode game
+    %% Start bughouse mode game with reserves
     {ok, continue} = binbo_bughouse:new_game(Pid, initial, #{mode => bughouse}),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, p),
 
     %% Export FEN
     {ok, Fen} = binbo_bughouse:get_fen(Pid),
@@ -940,10 +949,8 @@ test_fen_round_trip_preserves_mode(Config) ->
     {ok, Pid2} = binbo_bughouse:new_server(),
     {ok, continue} = binbo_bughouse:new_game(Pid2, Fen, #{mode => bughouse}),
 
-    %% Verify mode preserved (test by checking we can move into check)
-    {ok, continue} = binbo_bughouse:new_game(Pid2,
-        <<"4k3/8/8/8/8/8/1r6/4K3 w - - 0 1">>, #{mode => bughouse}),
-    {ok, continue} = binbo_bughouse:move(Pid2, <<"e1d1">>),
+    %% Verify mode preserved by checking drops work (bughouse-only feature)
+    {ok, continue} = binbo_bughouse:drop_move_uci(Pid2, <<"P@e4">>),
 
     binbo_bughouse:stop_server(Pid2),
     ok.
@@ -971,11 +978,9 @@ test_bughouse_mode_initialization(Config) ->
     %% Initialize with bughouse mode
     {ok, continue} = binbo_bughouse:new_game(Pid, initial, #{mode => bughouse}),
 
-    %% Test by trying to move into check (should succeed in bughouse mode)
-    %% Black rook on d8 attacks d1
-    {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"3rk3/8/8/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
-    {ok, continue} = binbo_bughouse:move(Pid, <<"e1d1">>),
+    %% Verify bughouse mode by testing drops work (bughouse-only feature)
+    ok = binbo_bughouse:add_to_reserve(Pid, white, n),
+    {ok, continue} = binbo_bughouse:drop_move_uci(Pid, <<"N@e4">>),
 
     ok.
 
@@ -995,9 +1000,10 @@ test_standard_mode_initialization(Config) ->
 
 test_mode_survives_fen_export_import(Config) ->
     Pid = get_pid(Config),
-    %% Start in bughouse mode
+    %% Start in bughouse mode with reserves
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/8/8/8/1r6/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1">>, #{mode => bughouse}),
+    ok = binbo_bughouse:add_to_reserve(Pid, white, n),
 
     %% Export FEN
     {ok, Fen} = binbo_bughouse:get_fen(Pid),
@@ -1006,8 +1012,8 @@ test_mode_survives_fen_export_import(Config) ->
     {ok, Pid2} = binbo_bughouse:new_server(),
     {ok, continue} = binbo_bughouse:new_game(Pid2, Fen, #{mode => bughouse}),
 
-    %% Should still work in bughouse mode
-    {ok, continue} = binbo_bughouse:move(Pid2, <<"e1d1">>),
+    %% Verify bughouse mode survived by testing drops work
+    {ok, continue} = binbo_bughouse:drop_move_uci(Pid2, <<"N@e4">>),
 
     binbo_bughouse:stop_server(Pid2),
     ok.
@@ -1021,11 +1027,9 @@ test_mode_in_game_state(Config) ->
     Game = binbo_bughouse:game_state(Pid),
     true = erlang:is_map(Game),
 
-    %% Mode should be in game state (we can't directly access it, but we can test behavior)
-    %% Test by checking bughouse behavior works
-    {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/8/8/8/1r6/4K3 w - - 0 1">>, #{mode => bughouse}),
-    {ok, continue} = binbo_bughouse:move(Pid, <<"e1d1">>),
+    %% Mode should be in game state — verify via bughouse-specific behavior (drops)
+    ok = binbo_bughouse:add_to_reserve(Pid, white, q),
+    {ok, continue} = binbo_bughouse:drop_move_uci(Pid, <<"Q@d4">>),
 
     ok.
 
@@ -1035,33 +1039,34 @@ test_mode_in_game_state(Config) ->
 
 test_drop_after_game_over(Config) ->
     Pid = get_pid(Config),
-    %% Set up king capture scenario
+    %% Set up checkmate scenario: back-rank mate
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
 
     %% Add pawn to reserve
     ok = binbo_bughouse:add_to_reserve(Pid, white, p),
 
-    %% Capture king
-    {ok, {king_captured, white_wins}} = binbo_bughouse:move(Pid, <<"e5e8">>),
+    %% Deliver checkmate
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
 
     %% Attempt to drop after game over
-    {error, {{game_over, {king_captured, white_wins}}, <<"P@e4">>}} =
+    {error, {{game_over, {checkmate, white_wins}}, <<"P@e4">>}} =
         binbo_bughouse:drop_move_uci(Pid, <<"P@e4">>),
 
     ok.
 
-test_drop_after_king_captured(Config) ->
+test_drop_after_checkmate(Config) ->
     Pid = get_pid(Config),
+    %% Set up checkmate scenario
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"6k1/5ppp/8/8/8/8/8/R3K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Capture king
-    {ok, {king_captured, white_wins}} = binbo_bughouse:move(Pid, <<"e5e8">>),
+    %% Deliver checkmate
+    {ok, {checkmate, white_wins}} = binbo_bughouse:move(Pid, <<"a1a8">>),
 
     %% Add pawn and try to drop
     ok = binbo_bughouse:add_to_reserve(Pid, white, p),
-    {error, {{game_over, {king_captured, white_wins}}, <<"P@e4">>}} =
+    {error, {{game_over, {checkmate, white_wins}}, <<"P@e4">>}} =
         binbo_bughouse:drop_move_uci(Pid, <<"P@e4">>),
 
     ok.
@@ -1152,23 +1157,44 @@ test_drop_creates_check(Config) ->
 
 test_drop_creates_checkmate(Config) ->
     Pid = get_pid(Config),
-    %% Position where black king is trapped: king on h8, pawns blocking escape
+    %% Ka8, white Qb6. Drop R@a1: Ra1 checks along a-file.
+    %% King on a8, Qb6 covers a7, b7, b8. Checkmate!
     {ok, continue} = binbo_bughouse:new_game(Pid,
-        <<"7k/6pp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1">>, #{mode => bughouse}),
+        <<"k7/8/1Q6/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
 
-    %% Add rook to reserves
     ok = binbo_bughouse:add_to_reserve(Pid, white, r),
 
-    %% Drop rook on h1 to give check along h-file
-    Result = binbo_bughouse:drop_move_uci(Pid, <<"R@h1">>),
+    %% Drop rook on a1 for checkmate
+    {ok, {checkmate, white_wins}} = binbo_bughouse:drop_move_uci(Pid, <<"R@a1">>),
 
-    %% In bughouse mode, should be continue (check is allowed)
-    %% In a properly configured checkmate position this might be mate, but hard to set up
-    true = case Result of
-        {ok, {checkmate, white_wins}} -> true;
-        {ok, continue} -> true;
-        _ -> false
-    end,
+    ok.
+
+test_drop_blocks_check(Config) ->
+    Pid = get_pid(Config),
+    %% White king on e1 in check from black rook on e8.
+    %% White has a rook in reserve. Dropping R@e4 blocks the check.
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"4r1k1/8/8/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+
+    ok = binbo_bughouse:add_to_reserve(Pid, white, r),
+
+    %% Drop rook on e4 to block the check along e-file
+    {ok, continue} = binbo_bughouse:drop_move_uci(Pid, <<"R@e4">>),
+
+    ok.
+
+test_drop_while_in_check_non_blocking(Config) ->
+    Pid = get_pid(Config),
+    %% White king on e1 in check from black rook on e8.
+    %% White has a pawn in reserve. Dropping P@a3 does NOT block check.
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"4r1k1/8/8/8/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
+
+    ok = binbo_bughouse:add_to_reserve(Pid, white, p),
+
+    %% Drop pawn on a3 — does not block check, should be rejected
+    {error, {{invalid_move, own_king_in_check}, <<"P@a3">>}} =
+        binbo_bughouse:drop_move_uci(Pid, <<"P@a3">>),
 
     ok.
 
@@ -1221,6 +1247,12 @@ test_standard_mode_king_cannot_be_captured(Config) ->
         <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => standard}),
 
     %% Cannot capture king in standard mode
+    {error, {{invalid_move, king_capture}, <<"e5e8">>}} =
+        binbo_bughouse:move(Pid, <<"e5e8">>),
+
+    %% Also verify king capture is illegal in bughouse mode
+    {ok, continue} = binbo_bughouse:new_game(Pid,
+        <<"4k3/8/8/4Q3/8/8/8/4K3 w - - 0 1">>, #{mode => bughouse}),
     {error, {{invalid_move, king_capture}, <<"e5e8">>}} =
         binbo_bughouse:move(Pid, <<"e5e8">>),
 

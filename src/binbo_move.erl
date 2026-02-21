@@ -268,16 +268,12 @@ do_validate_move([capture|Tail], Game, #move_info{to_idx = To, pcolor = Pcolor} 
     % Validate a capture.
     Captured = binbo_position:get_piece(To, Game),
     CaptColor = ?COLOR(Captured),
-    Mode = binbo_position:get_mode(Game),
     case ?IS_PIECE(Captured) of
         true when Pcolor =:= CaptColor -> % own piece captured (error)
             {error, own_piece_capture};
         true when ?PIECE_TYPE(Captured) =:= ?KING ->
-            % King capture: error in standard mode, allowed in bughouse mode
-            case Mode of
-                standard -> {error, {invalid_move, king_capture}};
-                bughouse -> do_validate_move(Tail, Game, MoveInfo#move_info{captured = Captured, captured_idx = To})
-            end;
+            % King capture is always illegal (checkmate rules)
+            {error, {invalid_move, king_capture}};
         true -> % enemy piece captured (ok)
             do_validate_move(Tail, Game, MoveInfo#move_info{captured = Captured, captured_idx = To});
         false -> % moved on empty square (ok)
@@ -620,7 +616,7 @@ do_validate_drop(Game, PieceType, ToIdx) ->
 
 %% execute_drop/4
 %% Executes the drop move: remove from reserve, place on board, update game state
--spec execute_drop(bb_game(), piece_type(), color(), sq_idx()) -> {ok, move_info(), bb_game()}.
+-spec execute_drop(bb_game(), piece_type(), color(), sq_idx()) -> {ok, move_info(), bb_game()} | {error, term()}.
 execute_drop(Game, PieceType, Color, ToIdx) ->
     % Remove piece from reserve
     {ok, Game2} = binbo_position:remove_piece_from_reserve(PieceType, Color, Game),
@@ -631,22 +627,29 @@ execute_drop(Game, PieceType, Color, ToIdx) ->
     % Place piece on board
     Game3 = binbo_position:set_piece(ToIdx, Piece, Game2),
 
-    % Create move info for the drop
-    MoveInfo = #move_info{
-        from_idx = undefined,
-        to_idx = ToIdx,
-        from_bb = ?EMPTY_BB,
-        to_bb = ?SQUARE_BB(ToIdx),
-        piece = Piece,
-        pcolor = Color,
-        ptype = PieceType,
-        captured = 0,
-        captured_idx = undefined,
-        promo = undefined,
-        castling = 0,
-        is_check = false,
-        has_valid_moves = true
-    },
+    % Verify own king not in check after drop
+    % (rejects drops when in check unless the drop blocks the check)
+    case binbo_position:is_in_check(Color, Game3) of
+        true ->
+            {error, {invalid_move, own_king_in_check}};
+        false ->
+            % Create move info for the drop
+            MoveInfo = #move_info{
+                from_idx = undefined,
+                to_idx = ToIdx,
+                from_bb = ?EMPTY_BB,
+                to_bb = ?SQUARE_BB(ToIdx),
+                piece = Piece,
+                pcolor = Color,
+                ptype = PieceType,
+                captured = 0,
+                captured_idx = undefined,
+                promo = undefined,
+                castling = 0,
+                is_check = false,
+                has_valid_moves = true
+            },
 
-    % Return game before finalization (finalize_move will be called by binbo_game)
-    {ok, MoveInfo, Game3}.
+            % Return game before finalization (finalize_move will be called by binbo_game)
+            {ok, MoveInfo, Game3}
+    end.

@@ -783,11 +783,6 @@ set_status_checkmate(Game) ->
     end,
     set_status({?GAME_STATUS_CHECKMATE, WhoWins}, Game).
 
-%% set_status_king_captured/2
--spec set_status_king_captured(white_wins | black_wins, bb_game()) -> bb_game().
-set_status_king_captured(Winner, Game) ->
-    set_status({?GAME_STATUS_KING_CAPTURED, Winner}, Game).
-
 %% set_status_stalemate/1
 -spec set_status_stalemate(bb_game()) -> bb_game().
 set_status_stalemate(Game) ->
@@ -1247,16 +1242,10 @@ make_move([set_piece | Tail], #move_info{ptype = Ptype} = MoveInfo, Game) ->
     make_move(Tail, MoveInfo, Game3);
 make_move([is_in_check | Tail], #move_info{pcolor = Pcolor} = MoveInfo, Game) ->
     % After updating position we should check whether the own king in check or not
-    % In bughouse mode, this check is skipped (king capture is allowed)
-    Mode = get_mode(Game),
-    case Mode of
-        bughouse ->
-            make_move(Tail, MoveInfo, Game);
-        standard ->
-            case is_in_check(Pcolor, Game) of
-                false -> make_move(Tail, MoveInfo, Game);
-                true  -> {error, {invalid_move, own_king_in_check}}
-            end
+    % Enforced in all modes (checkmate rules)
+    case is_in_check(Pcolor, Game) of
+        false -> make_move(Tail, MoveInfo, Game);
+        true  -> {error, {invalid_move, own_king_in_check}}
     end;
 make_move([enpassant | Tail], MoveInfo, Game) ->
     % Update enpassant info
@@ -1423,19 +1412,8 @@ finalize_move([hashmap | Tail], MoveInfo, Game) ->
     Game2 = update_hashmap(Game),
     finalize_move(Tail, MoveInfo, Game2);
 finalize_move([status | Tail], MoveInfo, Game) ->
-    #move_info{is_check = IsCheck, has_valid_moves = HasValidMoves, captured = Captured, pcolor = Pcolor} = MoveInfo,
-    % Check if king was captured (Bughouse mode)
-    Game2 = case ?IS_PIECE(Captured) andalso (?PIECE_TYPE(Captured) =:= ?KING) of
-        true ->
-            % King captured! Determine winner
-            Winner = case Pcolor of
-                ?WHITE -> white_wins;
-                ?BLACK -> black_wins
-            end,
-            set_status_king_captured(Winner, Game);
-        false ->
-            with_status(Game, HasValidMoves, IsCheck)
-    end,
+    #move_info{is_check = IsCheck, has_valid_moves = HasValidMoves} = MoveInfo,
+    Game2 = with_status(Game, HasValidMoves, IsCheck),
     finalize_move(Tail, MoveInfo, Game2).
 
 

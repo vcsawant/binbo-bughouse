@@ -16,6 +16,7 @@
 
 -export([all_valid_moves/2, all_valid_moves/3]).
 -export([has_valid_moves/2]).
+-export([has_any_valid_drop/3]).
 -export([all_legal_drops/1, all_legal_drops/2]).
 -export([can_drop/3]).
 
@@ -167,6 +168,28 @@ can_drop(PieceType, ToIdx, Game) when is_integer(ToIdx) ->
             end
     end.
 
+
+%% has_any_valid_drop/3
+%% Checks if any drop move is legal for the given color.
+%% IsCheck indicates whether the player is currently in check.
+%% If not in check and reserves are non-empty, any drop on an empty square is valid.
+%% If in check, we must verify that a drop can block the check.
+-spec has_any_valid_drop(color(), boolean(), bb_game()) -> boolean().
+has_any_valid_drop(Color, IsCheck, Game) ->
+    Reserve = binbo_position:get_reserve(Color, Game),
+    HasAnyReserve = lists:any(fun({_Key, Count}) -> Count > 0 end, maps:to_list(Reserve)),
+    case HasAnyReserve of
+        false -> false;
+        true ->
+            case IsCheck of
+                false ->
+                    % Not in check: any drop on an empty square is valid
+                    true;
+                true ->
+                    % In check: must find a drop that blocks the check
+                    try_blocking_drops(Color, Reserve, Game)
+            end
+    end.
 
 %%%------------------------------------------------------------------------------
 %%%   Internal functions
@@ -332,3 +355,50 @@ squares_to_drops(BB, PieceChar, Acc) ->
     DropNotation = <<PieceChar, $@, Notation/binary>>,
     RestBB = BB bxor SquareBB, % Clear the bit
     squares_to_drops(RestBB, PieceChar, [DropNotation | Acc]).
+
+
+%%%------------------------------------------------------------------------------
+%%%   Blocking Drop Helpers (Bughouse checkmate detection)
+%%%------------------------------------------------------------------------------
+
+%% try_blocking_drops/3
+%% When in check, try each available piece type on each empty square
+%% to find a drop that resolves the check.
+-spec try_blocking_drops(color(), map(), bb_game()) -> boolean().
+try_blocking_drops(Color, Reserve, Game) ->
+    OccupiedBB = maps:get(bball, Game),
+    EmptySquaresBB = (bnot OccupiedBB) band ?ALL_SQUARES_BB,
+    PieceTypes = [{p, ?PAWN}, {n, ?KNIGHT}, {b, ?BISHOP}, {r, ?ROOK}, {q, ?QUEEN}],
+    AvailableTypes = [PT || {Key, PT} <- PieceTypes, maps:get(Key, Reserve, 0) > 0],
+    try_drop_piece_types(AvailableTypes, Color, EmptySquaresBB, Game).
+
+%% try_drop_piece_types/4
+-spec try_drop_piece_types([piece_type()], color(), bb(), bb_game()) -> boolean().
+try_drop_piece_types([], _Color, _EmptyBB, _Game) ->
+    false;
+try_drop_piece_types([PieceType | Rest], Color, EmptyBB, Game) ->
+    SquaresBB = case PieceType of
+        ?PAWN -> EmptyBB band (bnot (?RANK_1_BB bor ?RANK_8_BB));
+        _ -> EmptyBB
+    end,
+    case try_drop_on_squares(PieceType, Color, SquaresBB, Game) of
+        true -> true;
+        false -> try_drop_piece_types(Rest, Color, EmptyBB, Game)
+    end.
+
+%% try_drop_on_squares/4
+%% Try placing a piece on each empty square and check if it resolves check.
+-spec try_drop_on_squares(piece_type(), color(), bb(), bb_game()) -> boolean().
+try_drop_on_squares(_PieceType, _Color, 0, _Game) ->
+    false;
+try_drop_on_squares(PieceType, Color, SquaresBB, Game) ->
+    SquareBB = SquaresBB band (-SquaresBB),
+    SquareIdx = binbo_bb:to_index(SquareBB),
+    Piece = ?TYPE_TO_PIECE(PieceType, Color),
+    Game2 = binbo_position:set_piece(SquareIdx, Piece, Game),
+    case binbo_position:is_in_check(Color, Game2) of
+        false -> true;  % Found a valid blocking drop
+        true ->
+            RestBB = SquaresBB bxor SquareBB,
+            try_drop_on_squares(PieceType, Color, RestBB, Game)
+    end.
